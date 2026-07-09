@@ -540,8 +540,7 @@ def _fill_prompt(job, template):
         "{{CLIENT_INFO}}": "(not provided by the job feed)",
         "{{SCORE_AND_MATCHES}}": f"internal score {score}; matched keywords: {matched}"
                                  if matched else f"internal score {score}",
-        "{{QUESTIONS}}": "(not provided by the feed — pre-answer the common Upwork "
-                         "screening questions as instructed in OUTPUT FORMAT)",
+        "{{QUESTIONS}}": "(none provided — return only the cover letter, no screening answers)",
     }
     out = template
     for k, v in subs.items():

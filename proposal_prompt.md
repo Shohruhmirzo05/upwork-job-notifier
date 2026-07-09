@@ -478,19 +478,10 @@ OUTPUT FORMAT:
 Return valid JSON only, nothing else:
 
 {
-  "cover_letter": "the full paste-ready cover letter in Shohruh's exact voice, ending with 'Best regards,\\nShohruh Alijonov\\n<title>'",
-  "screening_answers": [
-    { "question": "the common screening question", "answer": "short paste-ready answer" }
-  ]
+  "cover_letter": "the full paste-ready cover letter in Shohruh's exact voice, ending with 'Best regards,\\nShohruh Alijonov\\n<title>'"
 }
 
-The actual Upwork screening questions are usually NOT provided in the input (they live behind the apply button). So for "screening_answers", ALWAYS pre-answer the most common Upwork screening questions for this job type, tailored to this job, so the user can copy whichever ones the job asks. Always include answers for these recurring questions:
-- "Please share links to your recently delivered App Store / Google Play apps" -> pick the 2-3 most relevant published apps with their real links
-- "Which architecture do you prefer for development?" -> e.g. MVVM + SwiftUI (iOS); clean architecture + Riverpod or Bloc (Flutter); modular, testable, maintainable
-- "Describe your recent experience with similar projects" -> 1-2 short sentences naming the closest project(s)
-- "Include a link to your GitHub and/or website" -> https://github.com/Shohruhmirzo05 and https://fera-tech.com/
-- Add availability/timeline or estimated price if the job type usually asks it.
-Keep each answer short (1-3 sentences), first person, no fabrication. If the {{QUESTIONS}} field below actually contains specific questions, answer THOSE exactly instead of the generic list.
+If, and only if, the {{QUESTIONS}} field below actually contains specific screening questions, add a "screening_answers" array answering THOSE questions exactly (short, first person, no fabrication). If {{QUESTIONS}} is empty or says none are provided, return ONLY the cover_letter and no screening_answers.
 
 INPUT YOU WILL RECEIVE:
 Job title:

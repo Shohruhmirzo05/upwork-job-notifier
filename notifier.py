@@ -48,6 +48,7 @@ MAX_PAGES = _int_env("MAX_PAGES", 2)          # only used if no search_queries
 PAGE_SIZE = 50
 JOBS_PER_QUERY = _int_env("JOBS_PER_QUERY", 50)  # newest N per search lane
 MAX_NOTIFS = _int_env("MAX_NOTIFS", 25)       # cap per run to avoid flood
+MAX_AGE_HOURS = _int_env("MAX_AGE_HOURS", 24)  # never notify jobs older than this (0 = off)
 SEEN_TTL_DAYS = _int_env("SEEN_TTL_DAYS", 7)
 SEEN_PATH = Path(os.environ.get("SEEN_PATH", "seen.json"))
 FILTERS_PATH = Path(os.environ.get("FILTERS_PATH", "filters.json"))
@@ -344,18 +345,31 @@ def clean_tier(t):
     return t.title()
 
 
-def fmt_age(publish):
-    """Human 'posted X ago' from an ISO timestamp or epoch-ms. Empty on failure."""
+def _parse_publish(publish):
+    """Parse Upwork publishTime (ISO string or epoch-ms) to a tz-aware datetime, or None."""
     if not publish:
-        return ""
+        return None
     try:
         if isinstance(publish, (int, float)) or str(publish).isdigit():
-            dt = datetime.fromtimestamp(int(publish) / 1000, tz=timezone.utc)
-        else:
-            dt = datetime.fromisoformat(str(publish).replace("Z", "+00:00"))
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
+            return datetime.fromtimestamp(int(publish) / 1000, tz=timezone.utc)
+        dt = datetime.fromisoformat(str(publish).replace("Z", "+00:00"))
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
     except Exception:
+        return None
+
+
+def age_hours(publish):
+    """Hours since a job was posted, or None if the timestamp is unknown/unparseable."""
+    dt = _parse_publish(publish)
+    if dt is None:
+        return None
+    return (datetime.now(timezone.utc) - dt).total_seconds() / 3600.0
+
+
+def fmt_age(publish):
+    """Human 'posted X ago'. Empty on failure."""
+    dt = _parse_publish(publish)
+    if dt is None:
         return ""
     secs = (datetime.now(timezone.utc) - dt).total_seconds()
     if secs < 60:
@@ -470,6 +484,16 @@ def main():
         return
 
     fresh = [j for j in hits if j["cipher"] not in seen]
+
+    # Freshness guard: never notify jobs older than MAX_AGE_HOURS (unknown age = keep).
+    if MAX_AGE_HOURS > 0:
+        n_before = len(fresh)
+        fresh = [j for j in fresh
+                 if (age_hours(j["publish"]) is None) or (age_hours(j["publish"]) <= MAX_AGE_HOURS)]
+        dropped = n_before - len(fresh)
+        if dropped:
+            print(f"[info] dropped {dropped} jobs older than {MAX_AGE_HOURS}h")
+
     fresh.sort(key=lambda j: -j["score"])  # best score first
     print(f"[info] {len(fresh)} new to notify")
 

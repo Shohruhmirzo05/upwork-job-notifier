@@ -1,34 +1,51 @@
-# Freelancer profile — used to auto-write tailored Upwork proposals.
-# Edit freely. The more specific and honest this is, the better the proposals.
-# Fill every <FILL: ...> before turning proposals on.
+Shohruh Alijonov
+Senior iOS / Flutter / Full-Stack Mobile & AI Engineer
+Portfolio: https://fera-tech.com/
+GitHub: https://github.com/Shohruhmirzo05
 
-Name: <FILL: your name>
-Title: Senior Mobile & AI Developer
-Upwork profile: <FILL: your Upwork profile URL>
-GitHub / portfolio: <FILL: links, if any>
-Typical rate: <FILL: e.g. $30–50/hr, or "flexible depending on scope">
-Years of experience: <FILL: e.g. 5+>
-Timezone / availability: <FILL: e.g. GMT+5, 30+ hrs/week, overlaps US mornings>
+Summary:
+I am a mobile and AI engineer with 3+ years of hands-on experience, 20+ mobile apps developed, and 10+ apps live on the App Store. I work across native iOS, Flutter, backend integrations, AI APIs, subscriptions, payments, notifications, QA, and App Store / Google Play delivery. I am comfortable taking over existing codebases, fixing production issues, building new features, and shipping products end to end.
 
-## Core skills
-- Native iOS: Swift, SwiftUI, UIKit, Xcode, App Store / TestFlight, StoreKit, App Intents,
-  Live Activities, Dynamic Island, WidgetKit
-- Cross-platform: Flutter, Dart, React Native
-- AI integration: OpenAI, Claude, Gemini; chatbots, AI agents, RAG, prompt engineering
-- Backend & data: Firebase, Supabase, REST APIs, authentication, RevenueCat / in-app purchases
-- Extras: maps / geospatial, push notifications, camera / on-device ML
+Main skills:
+Swift, SwiftUI, UIKit, Xcode, TestFlight, App Store Connect, Flutter, Dart, Firebase, Supabase, REST APIs, WebSockets, OpenAI, Claude, Gemini, LLMs, AI chat, voice, OCR, image analysis, RevenueCat, StoreKit 2, Superwall, Push Notifications, APNs, FCM, MapKit, Core Location, AVFoundation, Vision, ARKit, RealityKit, App Intents, Shortcuts, Live Activities, Dynamic Island, WidgetKit, QA, real-device testing, GitHub Actions.
 
-## Selected work (use these as proof in proposals)
-- Launchcast — <FILL: one line, e.g. "API-driven rocket-launch tracker with geospatial
-  features, push notifications, and a home-screen widget (SwiftUI)">
-- <FILL: another app/project — what you built, the stack, and the outcome if you have one>
-- <FILL: a third, ideally one that shows AI or Flutter or App Store shipping>
+Main projects:
 
-## How I work
-- Clear milestones with weekly progress updates and real test builds (TestFlight / APK)
-- You own 100% of source code and deliverables after final payment
-- I fix critical issues first, communicate proactively, and ship to the stores
+Launchcast:
+Native SwiftUI iOS app built end to end with API integrations, subscriptions, push notifications, widgets, App Intents, Spotlight actions, Live Activities, Dynamic Island, ARKit/RealityKit 3D rocket placement, TestFlight, and App Store delivery.
+https://apps.apple.com/us/app/launchcast-space-launch-live/id6762834777
 
-## Voice for proposals
-- Confident, concrete, human. Reference the client's ACTUAL project.
-- No "I am excited to apply", no fluff, no emojis. ~150 words.
+Salom AI:
+Production AI platform with iOS app, web app, backend services, admin dashboard, authentication, AI integrations, subscriptions, analytics, educational/DTM features, voice/image workflows, and more than 6,800 registered users.
+https://salom-ai.uz/
+https://apps.apple.com/uz/app/salom-ai-suniy-intellekt/id6755544831
+Android Flutter version is in final testing / feature-completion / bug-fixing stage before Google Play release.
+Do not mention Telegram in Upwork proposals unless the job specifically asks about Telegram.
+
+CrisisPath:
+Production Flutter application available on iOS and Android. Worked on Flutter features, existing codebase improvements, backend-connected flows, subscriptions, debugging, testing, and release delivery.
+https://www.crisispath.com/
+https://play.google.com/store/apps/details?id=com.CrisisPath.app
+
+Kowl:
+Production iOS app with user profiles, marketplace/social-style flows, backend integration, and App Store delivery.
+https://apps.apple.com/uz/app/kowl-everything-for-artists/id6502518316
+
+Clove AI:
+AI-powered consumer app with personalized generation workflows and structured AI responses.
+https://clove-app.com/
+
+PicTrans:
+Production iOS camera/media app with OCR, image processing, real-device performance work, and App Store release.
+https://apps.apple.com/uz/app/screen-translator-pictrans/id6748305608
+
+Karly:
+Consumer-facing iOS app serving more than 200,000 users overall. Work focused on iOS features, production bugs, performance, and user experience quality.
+
+Rates:
+Default hourly rate: $30/hour
+Specialized iOS/App Store/AI/App Intents/ARKit work: $35/hour
+Fixed-price work can be estimated after scope review.
+
+Style:
+Write concise, custom Upwork proposals. Use first person. Use hyphen bullets, not asterisks. Do not fabricate. Do not mention Telegram unless directly relevant. Pick only the most relevant projects for each job.

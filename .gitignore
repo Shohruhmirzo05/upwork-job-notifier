@@ -10,3 +10,6 @@ seen.json
 # python
 __pycache__/
 *.pyc
+
+# on-demand proposal job store (runtime only, cached in Actions)
+store.json

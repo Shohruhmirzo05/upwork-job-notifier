@@ -59,10 +59,18 @@ TOKEN_PATH = Path(os.environ.get("TOKEN_PATH", ".token.json"))
 TOKEN_TTL_SEC = _int_env("TOKEN_TTL_SEC", 1500)  # reuse a cached visitor token ~25 min
 
 # ---- proposal drafting (optional; free Google Gemini). Empty key = disabled. ----
+# Proposals are ON DEMAND: each job card gets a "Generate Proposal" button; a draft is
+# only written (spending tokens) when you tap it. No key = the button is hidden.
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash").strip()
-PROPOSAL_MIN_SCORE = _int_env("PROPOSAL_MIN_SCORE", 30)  # only draft for jobs >= this
 PROFILE_PATH = Path(os.environ.get("PROFILE_PATH", "profile.md"))
+PROMPT_PATH = Path(os.environ.get("PROMPT_PATH", "proposal_prompt.md"))
+
+# ---- serve loop + button-tap handling ----
+JOB_INTERVAL = _int_env("CHECK_INTERVAL", 90)   # seconds between job scans in serve mode
+SERVE_SECONDS = _int_env("SERVE_SECONDS", 0)    # >0 -> run the serve loop this many seconds
+STORE_PATH = Path(os.environ.get("STORE_PATH", "store.json"))
+STORE_TTL_HOURS = _int_env("STORE_TTL_HOURS", 26)  # keep tapped-job details this long
 
 UPWORK_HOME = "https://www.upwork.com/"
 GRAPHQL_URL = "https://www.upwork.com/api/graphql/v1"
@@ -446,11 +454,17 @@ def build_message(job, cfg):
 
 
 def send(job, cfg):
+    payload = {
+        "chat_id": CHAT_ID, "text": build_message(job, cfg), "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }
+    # On-demand proposal button (only when Gemini is configured).
+    if GEMINI_API_KEY and job.get("cipher"):
+        payload["reply_markup"] = {"inline_keyboard": [[
+            {"text": "📝 Generate Proposal", "callback_data": f"p:{job['cipher']}"[:64]},
+        ]]}
     r = requests.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        json={"chat_id": CHAT_ID, "text": build_message(job, cfg), "parse_mode": "HTML",
-              "disable_web_page_preview": True},
-        timeout=15,
+        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json=payload, timeout=15,
     )
     if r.status_code != 200:
         print(f"[warn] telegram {r.status_code}: {r.text[:200]}", file=sys.stderr)
@@ -461,6 +475,28 @@ def send_plain(text):
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
         json={"chat_id": CHAT_ID, "text": text}, timeout=15,
     )
+
+
+def answer_callback(callback_id, text=""):
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/answerCallbackQuery",
+            json={"callback_query_id": callback_id, "text": text[:200]}, timeout=15,
+        )
+    except Exception as e:
+        print(f"[warn] answerCallback failed: {e}", file=sys.stderr)
+
+
+def tg_reply(chat_id, reply_to_message_id, text):
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+            json={"chat_id": chat_id, "text": text[:4000],
+                  "reply_to_message_id": reply_to_message_id,
+                  "disable_web_page_preview": True}, timeout=20,
+        )
+    except Exception as e:
+        print(f"[warn] tg_reply failed: {e}", file=sys.stderr)
 
 
 def ping_healthcheck():
@@ -481,39 +517,62 @@ def load_profile():
         return ""
 
 
-def _proposal_prompt(job, profile):
-    skills = ", ".join(job["skills"][:10])
-    desc = job["description"][:1500]
+def load_prompt_template():
+    try:
+        return PROMPT_PATH.read_text()
+    except Exception:
+        return ""
+
+
+def _fill_prompt(job, template):
+    """Substitute the job's data into the proposal-brain template placeholders."""
+    matched = ", ".join(job.get("matched", []) or [])
+    score = job.get("score", "")
+    subs = {
+        "{{JOB_TITLE}}": job.get("title", ""),
+        "{{JOB_DESCRIPTION}}": (job.get("description", "") or "")[:4000],
+        "{{SKILLS}}": ", ".join((job.get("skills") or [])[:15]),
+        "{{BUDGET}}": fmt_budget(job),
+        "{{CLIENT_INFO}}": "(not provided by the job feed)",
+        "{{SCORE_AND_MATCHES}}": f"internal score {score}; matched keywords: {matched}"
+                                 if matched else f"internal score {score}",
+        "{{QUESTIONS}}": "(screening questions are not available from the job feed; "
+                         "provide answers only if the description implies them)",
+    }
+    out = template
+    for k, v in subs.items():
+        out = out.replace(k, str(v))
+    return out
+
+
+def _fallback_prompt(job):
+    profile = load_profile()
     return (
-        "Write a first-person Upwork proposal for the freelancer described below.\n\n"
-        f"FREELANCER PROFILE:\n{profile or '(a senior mobile & AI developer)'}\n\n"
-        "JOB POST:\n"
-        f"Title: {job['title']}\n"
-        f"Budget: {fmt_budget(job)}\n"
-        f"Skills: {skills}\n"
-        f"Description: {desc}\n\n"
-        "RULES:\n"
-        "- 140-180 words, plain text, no markdown, no bullet symbols, no emojis.\n"
-        "- Open with a specific hook about THEIR project (never 'I saw your job post').\n"
-        "- Use the 2-3 most relevant proofs from the profile that match THIS job.\n"
-        "- Include one concrete idea or one sharp clarifying question.\n"
-        "- Confident and human. No 'I am excited', no fluff.\n"
-        "- End with a brief call to action.\n"
+        "Write a first-person Upwork proposal for the freelancer below. Direct, confident, "
+        "hyphen bullets not asterisks, no emojis, no fabrication, ~180 words.\n\n"
+        f"FREELANCER:\n{profile or '(a senior mobile & AI developer)'}\n\n"
+        f"JOB\nTitle: {job['title']}\nBudget: {fmt_budget(job)}\n"
+        f"Skills: {', '.join((job.get('skills') or [])[:10])}\n"
+        f"Description: {(job.get('description') or '')[:1500]}\n"
     )
 
 
-def generate_proposal(job, profile):
-    """Draft a tailored proposal via Gemini's free tier. None on any failure/disabled."""
+def generate_proposal(job):
+    """Call Gemini's free tier with the proposal-brain prompt. Returns the raw model text
+    (JSON string from the brain, or plain text from the fallback). None on failure/disabled."""
     if not GEMINI_API_KEY:
         return None
+    template = load_prompt_template()
+    use_json = bool(template)
+    prompt = _fill_prompt(job, template) if template else _fallback_prompt(job)
+    gen_cfg = {"temperature": 0.6, "maxOutputTokens": 3072}
+    if use_json:
+        gen_cfg["responseMimeType"] = "application/json"
     url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
            f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}")
-    body = {
-        "contents": [{"parts": [{"text": _proposal_prompt(job, profile)}]}],
-        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 700},
-    }
+    body = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": gen_cfg}
     try:
-        r = requests.post(url, json=body, timeout=45)
+        r = requests.post(url, json=body, timeout=60)
         if r.status_code != 200:
             print(f"[warn] gemini HTTP {r.status_code}: {r.text[:200]}", file=sys.stderr)
             return None
@@ -528,13 +587,59 @@ def generate_proposal(job, profile):
         return None
 
 
-def send_proposal(text):
-    msg = f"📝 Draft proposal — review, tweak, send:\n\n{text}"
-    requests.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        json={"chat_id": CHAT_ID, "text": msg[:4000], "disable_web_page_preview": True},
-        timeout=15,
-    )
+def _chunk(text, limit=4000):
+    text = (text or "").strip()
+    out = []
+    while len(text) > limit:
+        out.append(text[:limit])
+        text = text[limit:]
+    if text:
+        out.append(text)
+    return out
+
+
+def format_proposal_messages(raw):
+    """Turn the brain's JSON (or plain text) into paste-ready Telegram messages:
+    cover letter first, then screening answers, then private notes."""
+    data = None
+    try:
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        data = json.loads(m.group(0) if m else raw)
+    except Exception:
+        data = None
+    if not isinstance(data, dict):
+        return _chunk(f"📝 Draft proposal — review, tweak, send:\n\n{raw}")
+
+    msgs = []
+    head = []
+    if data.get("recommended_title"):
+        head.append(f"📌 {data['recommended_title']}")
+    if data.get("recommended_rate_or_price"):
+        head.append(f"💵 {data['recommended_rate_or_price']}")
+    cover = (data.get("cover_letter") or "").strip()
+    first = ("\n".join(head) + "\n\n" + cover).strip() if head else cover
+    msgs += _chunk(first or "(empty proposal — tap to retry)")
+
+    sa = data.get("screening_answers") or []
+    if sa:
+        lines = ["— Screening answers —"]
+        for qa in sa:
+            q = (qa.get("question") or "").strip()
+            a = (qa.get("answer") or "").strip()
+            if q:
+                lines.append(f"\nQ: {q}")
+            if a:
+                lines.append(a)
+        msgs += _chunk("\n".join(lines))
+
+    notes = [f"• {w}" for w in (data.get("why_this_matches") or [])]
+    notes += [f"⚠️ {r}" for r in (data.get("risk_notes") or [])]
+    atts = data.get("attachments_to_include") or []
+    if atts:
+        notes += [f"📎 {a}" for a in atts]
+    if notes:
+        msgs += _chunk("🔎 Notes (for you, not the client):\n" + "\n".join(notes))
+    return msgs
 
 
 # ---------- state ----------
@@ -554,19 +659,96 @@ def save_seen(seen):
     SEEN_PATH.write_text(json.dumps(pruned, indent=0))
 
 
-# ---------- main ----------
-def main():
-    if not BOT_TOKEN or not CHAT_ID:
-        sys.exit("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID")
+def load_store():
+    """State for the on-demand proposals: getUpdates offset + recently-notified job details
+    (so a 'Generate Proposal' tap can look the job up later)."""
+    try:
+        s = json.loads(STORE_PATH.read_text())
+        s.setdefault("offset", 0)
+        s.setdefault("jobs", {})
+        return s
+    except Exception:
+        return {"offset": 0, "jobs": {}}
 
-    cfg = load_filters()
-    print(f"[info] filters: {len(cfg['_require'])} required, {len(cfg['_exclude'])} excluded, "
-          f"{len(cfg['_boost'])} boosts, {len(cfg.get('search_queries') or [])} search lanes, "
-          f"min_score={cfg['min_score']}")
 
-    proxy = get_proxy_dict()
+def save_store(store):
+    cutoff = time.time() - STORE_TTL_HOURS * 3600
+    store["jobs"] = {k: v for k, v in store.get("jobs", {}).items() if v.get("ts", 0) > cutoff}
+    try:
+        STORE_PATH.write_text(json.dumps(store))
+    except Exception as e:
+        print(f"[warn] save_store failed: {e}", file=sys.stderr)
+
+
+def remember_job(store, job):
+    store.setdefault("jobs", {})[job["cipher"]] = {
+        "title": job["title"], "description": job["description"], "skills": job["skills"],
+        "job_type": job["job_type"], "hourly_min": job["hourly_min"],
+        "hourly_max": job["hourly_max"], "fixed": job["fixed"],
+        "link": job["link"], "score": job.get("score", 0), "ts": time.time(),
+    }
+
+
+# ---------- button-tap handling ----------
+def handle_callbacks(cfg, long_poll=0):
+    """Poll Telegram for 'Generate Proposal' taps; write + reply a draft for each."""
+    if not GEMINI_API_KEY:
+        return
+    store = load_store()
+    params = {"timeout": long_poll, "allowed_updates": json.dumps(["callback_query"])}
+    if store.get("offset"):
+        params["offset"] = store["offset"] + 1
+    try:
+        r = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates",
+                         params=params, timeout=long_poll + 15)
+        updates = r.json().get("result", []) or []
+    except Exception as e:
+        print(f"[warn] getUpdates failed: {e}", file=sys.stderr)
+        return
+    if not updates:
+        return
+
+    # Only act on updates newer than what we've already processed (defense in depth on top
+    # of Telegram's own offset), then advance + persist the offset BEFORE the slow
+    # generation so a crash can't make us re-answer the same tap. The button stays on the
+    # message, so re-tapping always works.
+    start_offset = store.get("offset", 0)
+    for u in updates:
+        store["offset"] = max(store.get("offset", 0), u.get("update_id", 0))
+    save_store(store)
+
+    for u in updates:
+        if u.get("update_id", 0) <= start_offset:
+            continue
+        cq = u.get("callback_query")
+        if not cq:
+            continue
+        msg = cq.get("message") or {}
+        chat_id = (msg.get("chat") or {}).get("id")
+        mid = msg.get("message_id")
+        answer_callback(cq.get("id", ""), "Generating your proposal…")
+        data = cq.get("data", "") or ""
+        if not data.startswith("p:"):
+            continue
+        job = store.get("jobs", {}).get(data[2:])
+        if not job:
+            tg_reply(chat_id, mid, "⚠️ I no longer have this job's details (expired). "
+                                   "Open it on Upwork to apply.")
+            continue
+        print(f"[info] proposal requested: {job['title'][:60]!r}")
+        raw = generate_proposal(job)
+        if raw:
+            for chunk in format_proposal_messages(raw):
+                tg_reply(chat_id, mid, chunk)
+                time.sleep(0.4)
+        else:
+            tg_reply(chat_id, mid, "⚠️ Couldn't generate a proposal (check GEMINI_API_KEY / "
+                                   "model). Tap the button to retry.")
+
+
+# ---------- one job scan ----------
+def run_job_check(cfg, proxy):
     token = get_token(proxy)
-
     jobs = fetch_all_jobs(token, proxy, cfg)
     if not jobs:
         # Likely a stale cached token (401) — force a fresh one and retry once.
@@ -593,7 +775,7 @@ def main():
         save_seen(seed)
         send_plain(f"✅ Upwork notifier armed. Watching {len(seed)} jobs across "
                    f"{len(cfg.get('search_queries') or [])} search lanes. "
-                   f"You'll get HOT/GOOD/MAYBE pings for new matching jobs (no AI, local scoring).")
+                   f"You'll get HOT/GOOD/MAYBE pings for new matching jobs.")
         print("[info] seeded baseline, no notifications sent")
         ping_healthcheck()
         return
@@ -603,8 +785,7 @@ def main():
     # Freshness guard: jobs older than MAX_AGE_HOURS are "handled" (marked seen below) but
     # never notified. Unknown age is treated as recent (kept).
     if MAX_AGE_HOURS > 0:
-        recent = []
-        n_old = 0
+        recent, n_old = [], 0
         for j in fresh:
             a = age_hours(j["publish"])
             if a is not None and a > MAX_AGE_HOURS:
@@ -617,22 +798,18 @@ def main():
 
     fresh.sort(key=lambda j: -j["score"])  # best score first
     to_send = fresh[:MAX_NOTIFS]
-    # Cap overflow is NOT marked seen -> it gets sent on the next check instead of being lost.
+    # Cap overflow is NOT marked seen -> it gets sent next check instead of being lost.
     overflow = {j["cipher"] for j in fresh[MAX_NOTIFS:]}
     if overflow:
         print(f"[info] {len(overflow)} over MAX_NOTIFS cap; will send next check")
     print(f"[info] {len(to_send)} new to notify")
 
-    profile = load_profile() if GEMINI_API_KEY else ""
+    store = load_store()
     for j in to_send:
-        send(j, cfg)
-        time.sleep(0.6)  # gentle on Telegram rate limits
-        # Draft a tailored proposal for the better jobs (free Gemini; disabled if no key).
-        if GEMINI_API_KEY and j["score"] >= PROPOSAL_MIN_SCORE:
-            proposal = generate_proposal(j, profile)
-            if proposal:
-                send_proposal(proposal)
-                time.sleep(0.6)
+        send(j, cfg)                 # card + on-demand proposal button
+        remember_job(store, j)       # so a later tap can look this job up
+        time.sleep(0.6)              # gentle on Telegram rate limits
+    save_store(store)
 
     # Mark seen: everything we fetched EXCEPT the cap-overflow hits (so none are lost).
     for j in jobs:
@@ -642,6 +819,51 @@ def main():
     save_seen(seen)
     ping_healthcheck()
     print("[info] done")
+
+
+# ---------- serve loop ----------
+def serve(cfg, proxy):
+    """Run for SERVE_SECONDS: scan jobs every JOB_INTERVAL and, in between, long-poll for
+    button taps so proposals come back within seconds."""
+    end = time.time() + SERVE_SECONDS
+    last_check = 0.0
+    print(f"[info] serve mode for {SERVE_SECONDS}s (job scan every {JOB_INTERVAL}s; "
+          f"proposal button {'ON' if GEMINI_API_KEY else 'off'})")
+    while True:
+        if time.time() >= end:
+            break
+        if time.time() - last_check >= JOB_INTERVAL:
+            try:
+                run_job_check(cfg, proxy)
+            except Exception as e:
+                print(f"[warn] job check failed: {e}", file=sys.stderr)
+            last_check = time.time()
+        remaining = end - time.time()
+        if remaining <= 0:
+            break
+        if GEMINI_API_KEY:
+            handle_callbacks(cfg, long_poll=min(25, max(1, int(remaining))))
+        else:
+            time.sleep(min(15, max(1, int(remaining))))
+
+
+# ---------- main ----------
+def main():
+    if not BOT_TOKEN or not CHAT_ID:
+        sys.exit("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID")
+
+    cfg = load_filters()
+    print(f"[info] filters: {len(cfg['_require'])} required, {len(cfg['_exclude'])} excluded, "
+          f"{len(cfg['_boost'])} boosts, {len(cfg.get('search_queries') or [])} search lanes, "
+          f"min_score={cfg['min_score']}")
+
+    proxy = get_proxy_dict()
+
+    if SERVE_SECONDS > 0:
+        serve(cfg, proxy)
+    else:
+        run_job_check(cfg, proxy)
+        handle_callbacks(cfg, long_poll=0)  # drain any pending taps once
 
 
 if __name__ == "__main__":

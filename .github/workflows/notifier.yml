@@ -28,7 +28,6 @@ jobs:
       HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}   # dead-man's-switch (optional)
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}     # free Gemini key for proposals (optional)
       GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
-      PROPOSAL_MIN_SCORE: ${{ vars.PROPOSAL_MIN_SCORE }}
       MAX_PAGES: ${{ vars.MAX_PAGES }}
       MAX_NOTIFS: ${{ vars.MAX_NOTIFS }}
       MAX_AGE_HOURS: ${{ vars.MAX_AGE_HOURS }}
@@ -50,7 +49,9 @@ jobs:
       - name: Restore dedup state
         uses: actions/cache/restore@v4
         with:
-          path: seen.json
+          path: |
+            seen.json
+            store.json
           key: upwork-seen-${{ github.run_id }}-restore
           restore-keys: |
             upwork-seen-
@@ -64,7 +65,9 @@ jobs:
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: seen.json
+          path: |
+            seen.json
+            store.json
           key: upwork-seen-${{ github.run_id }}-1
 
       - name: Cycle 2
@@ -74,7 +77,9 @@ jobs:
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: seen.json
+          path: |
+            seen.json
+            store.json
           key: upwork-seen-${{ github.run_id }}-2
 
       - name: Cycle 3
@@ -84,7 +89,9 @@ jobs:
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: seen.json
+          path: |
+            seen.json
+            store.json
           key: upwork-seen-${{ github.run_id }}-3
 
       - name: Cycle 4
@@ -94,7 +101,9 @@ jobs:
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: seen.json
+          path: |
+            seen.json
+            store.json
           key: upwork-seen-${{ github.run_id }}-4
 
       - name: Cycle 5
@@ -104,7 +113,9 @@ jobs:
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: seen.json
+          path: |
+            seen.json
+            store.json
           key: upwork-seen-${{ github.run_id }}-5
 
       - name: Cycle 6
@@ -114,7 +125,9 @@ jobs:
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: seen.json
+          path: |
+            seen.json
+            store.json
           key: upwork-seen-${{ github.run_id }}-6
 
       - name: Cycle 7
@@ -124,7 +137,9 @@ jobs:
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: seen.json
+          path: |
+            seen.json
+            store.json
           key: upwork-seen-${{ github.run_id }}-7
 
       - name: Cycle 8
@@ -134,5 +149,7 @@ jobs:
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: seen.json
+          path: |
+            seen.json
+            store.json
           key: upwork-seen-${{ github.run_id }}-8

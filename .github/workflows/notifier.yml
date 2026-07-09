@@ -26,6 +26,9 @@ jobs:
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       WEBSHARE_URL: ${{ secrets.WEBSHARE_URL }}
       HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}   # dead-man's-switch (optional)
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}     # free Gemini key for proposals (optional)
+      GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+      PROPOSAL_MIN_SCORE: ${{ vars.PROPOSAL_MIN_SCORE }}
       MAX_PAGES: ${{ vars.MAX_PAGES }}
       MAX_NOTIFS: ${{ vars.MAX_NOTIFS }}
       MAX_AGE_HOURS: ${{ vars.MAX_AGE_HOURS }}

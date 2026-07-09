@@ -58,6 +58,12 @@ FILTERS_PATH = Path(os.environ.get("FILTERS_PATH", "filters.json"))
 TOKEN_PATH = Path(os.environ.get("TOKEN_PATH", ".token.json"))
 TOKEN_TTL_SEC = _int_env("TOKEN_TTL_SEC", 1500)  # reuse a cached visitor token ~25 min
 
+# ---- proposal drafting (optional; free Google Gemini). Empty key = disabled. ----
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash").strip()
+PROPOSAL_MIN_SCORE = _int_env("PROPOSAL_MIN_SCORE", 30)  # only draft for jobs >= this
+PROFILE_PATH = Path(os.environ.get("PROFILE_PATH", "profile.md"))
+
 UPWORK_HOME = "https://www.upwork.com/"
 GRAPHQL_URL = "https://www.upwork.com/api/graphql/v1"
 TOKEN_COOKIE = "visitor_gql_token"
@@ -467,6 +473,70 @@ def ping_healthcheck():
         print(f"[warn] healthcheck ping failed: {e}", file=sys.stderr)
 
 
+# ---------- proposal drafting (free Gemini) ----------
+def load_profile():
+    try:
+        return PROFILE_PATH.read_text().strip()
+    except Exception:
+        return ""
+
+
+def _proposal_prompt(job, profile):
+    skills = ", ".join(job["skills"][:10])
+    desc = job["description"][:1500]
+    return (
+        "Write a first-person Upwork proposal for the freelancer described below.\n\n"
+        f"FREELANCER PROFILE:\n{profile or '(a senior mobile & AI developer)'}\n\n"
+        "JOB POST:\n"
+        f"Title: {job['title']}\n"
+        f"Budget: {fmt_budget(job)}\n"
+        f"Skills: {skills}\n"
+        f"Description: {desc}\n\n"
+        "RULES:\n"
+        "- 140-180 words, plain text, no markdown, no bullet symbols, no emojis.\n"
+        "- Open with a specific hook about THEIR project (never 'I saw your job post').\n"
+        "- Use the 2-3 most relevant proofs from the profile that match THIS job.\n"
+        "- Include one concrete idea or one sharp clarifying question.\n"
+        "- Confident and human. No 'I am excited', no fluff.\n"
+        "- End with a brief call to action.\n"
+    )
+
+
+def generate_proposal(job, profile):
+    """Draft a tailored proposal via Gemini's free tier. None on any failure/disabled."""
+    if not GEMINI_API_KEY:
+        return None
+    url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+           f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}")
+    body = {
+        "contents": [{"parts": [{"text": _proposal_prompt(job, profile)}]}],
+        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 700},
+    }
+    try:
+        r = requests.post(url, json=body, timeout=45)
+        if r.status_code != 200:
+            print(f"[warn] gemini HTTP {r.status_code}: {r.text[:200]}", file=sys.stderr)
+            return None
+        cands = r.json().get("candidates") or []
+        if not cands:
+            return None
+        parts = (cands[0].get("content") or {}).get("parts") or []
+        text = "".join(p.get("text", "") for p in parts).strip()
+        return text or None
+    except Exception as e:
+        print(f"[warn] gemini error: {e}", file=sys.stderr)
+        return None
+
+
+def send_proposal(text):
+    msg = f"📝 Draft proposal — review, tweak, send:\n\n{text}"
+    requests.post(
+        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+        json={"chat_id": CHAT_ID, "text": msg[:4000], "disable_web_page_preview": True},
+        timeout=15,
+    )
+
+
 # ---------- state ----------
 def load_seen():
     if not SEEN_PATH.exists():
@@ -553,9 +623,16 @@ def main():
         print(f"[info] {len(overflow)} over MAX_NOTIFS cap; will send next check")
     print(f"[info] {len(to_send)} new to notify")
 
+    profile = load_profile() if GEMINI_API_KEY else ""
     for j in to_send:
         send(j, cfg)
         time.sleep(0.6)  # gentle on Telegram rate limits
+        # Draft a tailored proposal for the better jobs (free Gemini; disabled if no key).
+        if GEMINI_API_KEY and j["score"] >= PROPOSAL_MIN_SCORE:
+            proposal = generate_proposal(j, profile)
+            if proposal:
+                send_proposal(proposal)
+                time.sleep(0.6)
 
     # Mark seen: everything we fetched EXCEPT the cap-overflow hits (so none are lost).
     for j in jobs:

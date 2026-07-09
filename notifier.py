@@ -218,16 +218,38 @@ def get_proxy_dict():
 
 
 # ---------- upwork ----------
-def get_token(proxy):
-    resp = requests.get(UPWORK_HOME, impersonate="chrome", proxies=proxy, timeout=30)
-    resp.raise_for_status()
-    token = resp.cookies.get(TOKEN_COOKIE)
-    if not token:
-        raise RuntimeError(f"No {TOKEN_COOKIE} cookie. Got: {list(resp.cookies.keys())}")
-    return token
+# Rotate TLS fingerprints across retries — helps dodge intermittent Cloudflare 403s
+# (e.g. from shared GitHub Actions IPs). Kept conservative to known curl_cffi targets.
+IMPERSONATE = ["chrome", "chrome131", "chrome124", "chrome120", "safari17_0"]
 
 
-def fetch_page(token, proxy, offset, user_query="", count=PAGE_SIZE):
+def get_token(proxy, tries=5):
+    """Fetch a visitor GraphQL token, retrying with backoff + rotating fingerprints.
+    Rides out transient 403s / rate-limits from Cloudflare."""
+    last = None
+    for i in range(tries):
+        imp = IMPERSONATE[i % len(IMPERSONATE)]
+        try:
+            resp = requests.get(UPWORK_HOME, impersonate=imp, proxies=proxy, timeout=30)
+            if resp.status_code == 200:
+                token = resp.cookies.get(TOKEN_COOKIE)
+                if token:
+                    return token
+                last = RuntimeError(f"200 but no {TOKEN_COOKIE} cookie "
+                                    f"({list(resp.cookies.keys())})")
+            else:
+                last = RuntimeError(f"home HTTP {resp.status_code}")
+        except Exception as e:
+            last = e
+        if i < tries - 1:
+            wait = 3 * (i + 1)
+            print(f"[warn] token attempt {i+1}/{tries} failed ({last}); retrying in {wait}s",
+                  file=sys.stderr)
+            time.sleep(wait)
+    raise RuntimeError(f"token fetch failed after {tries} tries: {last}")
+
+
+def fetch_page(token, proxy, offset, user_query="", count=PAGE_SIZE, tries=3):
     headers = {**HEADERS_BASE, "Authorization": f"Bearer {token}"}
     # highlight:False -> clean title/description text (no <em>/control-char markers)
     reqvars = {"sort": "recency", "highlight": False,
@@ -235,12 +257,21 @@ def fetch_page(token, proxy, offset, user_query="", count=PAGE_SIZE):
     if user_query:
         reqvars["userQuery"] = user_query
     payload = {"query": GRAPHQL_QUERY, "variables": {"requestVariables": reqvars}}
-    resp = requests.post(GRAPHQL_URL, headers=headers, json=payload,
-                         proxies=proxy, impersonate="chrome", timeout=25)
-    resp.raise_for_status()
-    data = resp.json()
-    return (data.get("data", {}).get("search", {}).get("universalSearchNuxt", {})
-            .get("visitorJobSearchV1", {}).get("results", []) or [])
+    last = None
+    for i in range(tries):
+        imp = IMPERSONATE[i % len(IMPERSONATE)]
+        try:
+            resp = requests.post(GRAPHQL_URL, headers=headers, json=payload,
+                                 proxies=proxy, impersonate=imp, timeout=25)
+            resp.raise_for_status()
+            data = resp.json()
+            return (data.get("data", {}).get("search", {}).get("universalSearchNuxt", {})
+                    .get("visitorJobSearchV1", {}).get("results", []) or [])
+        except Exception as e:
+            last = e
+            if i < tries - 1:
+                time.sleep(2 * (i + 1))
+    raise last
 
 
 def parse_job(r):

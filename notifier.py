@@ -450,7 +450,7 @@ def build_message(job, cfg):
     ]
     if matched:
         lines.append(f"🎯 {esc(matched)}")
-    lines.append(f'<a href="{job["link"]}">Open ↗</a>')
+    # The Upwork link is an inline button now (see send()), not a body link.
     return "\n".join(lines)
 
 
@@ -459,11 +459,14 @@ def send(job, cfg):
         "chat_id": CHAT_ID, "text": build_message(job, cfg), "parse_mode": "HTML",
         "disable_web_page_preview": True,
     }
-    # On-demand proposal button (only when Gemini is configured).
+    # Row of inline buttons: Open (external URL) + Generate Proposal (callback, if Gemini on).
+    row = []
+    if job.get("link"):
+        row.append({"text": "🔗 Open on Upwork", "url": job["link"]})
     if GEMINI_API_KEY and job.get("cipher"):
-        payload["reply_markup"] = {"inline_keyboard": [[
-            {"text": "📝 Generate Proposal", "callback_data": f"p:{job['cipher']}"[:64]},
-        ]]}
+        row.append({"text": "📝 Generate Proposal", "callback_data": f"p:{job['cipher']}"[:64]})
+    if row:
+        payload["reply_markup"] = {"inline_keyboard": [row]}
     r = requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json=payload, timeout=15,
     )
@@ -572,12 +575,14 @@ def generate_proposal(job):
                "thinkingConfig": {"thinkingBudget": 0}}
     if use_json:
         gen_cfg["responseMimeType"] = "application/json"
+    # Key goes in a header, not the URL query string, so it can't leak via URL logging.
     url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
-           f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}")
+           f"{GEMINI_MODEL}:generateContent")
+    headers = {"x-goog-api-key": GEMINI_API_KEY}
     body = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": gen_cfg}
     for attempt in range(3):
         try:
-            r = requests.post(url, json=body, timeout=90)
+            r = requests.post(url, json=body, headers=headers, timeout=90)
             if r.status_code == 200:
                 cands = r.json().get("candidates") or []
                 parts = (cands[0].get("content") or {}).get("parts") or [] if cands else []

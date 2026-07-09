@@ -492,17 +492,21 @@ def answer_callback(callback_id, text=""):
         print(f"[warn] answerCallback failed: {e}", file=sys.stderr)
 
 
-def tg_reply(chat_id, reply_to_message_id, text, reply_markup=None):
-    payload = {"chat_id": chat_id, "text": text[:4000],
-               "reply_to_message_id": reply_to_message_id,
-               "disable_web_page_preview": True}
+def tg_reply(chat_id, reply_to_message_id, text, reply_markup=None, parse_mode=None):
+    payload = {"chat_id": chat_id, "text": text[:4000], "disable_web_page_preview": True}
+    if reply_to_message_id:
+        payload["reply_to_message_id"] = reply_to_message_id
     if reply_markup:
         payload["reply_markup"] = reply_markup
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
     try:
-        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-                      json=payload, timeout=20)
+        r = requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                          json=payload, timeout=20)
+        return (r.json().get("result") or {}).get("message_id")
     except Exception as e:
         print(f"[warn] tg_reply failed: {e}", file=sys.stderr)
+        return None
 
 
 def ping_healthcheck():
@@ -605,7 +609,8 @@ def generate_proposal(job):
 
 
 def generate_answers(job, questions):
-    """Answer the client's screening questions, consistent with the proposal already sent."""
+    """Answer the client's screening questions. Returns a list of (question, answer) — one
+    per distinct question — consistent with the proposal already sent. None on failure."""
     profile = load_profile()
     proposal = job.get("proposal") or "(proposal text not stored)"
     prompt = (
@@ -615,15 +620,26 @@ def generate_answers(job, questions):
         f"PROPOSAL ALREADY SENT FOR THIS JOB:\n{proposal}\n\n"
         f"JOB:\nTitle: {job.get('title', '')}\n"
         f"Description: {(job.get('description') or '')[:1200]}\n\n"
-        f"CLIENT'S SCREENING QUESTION(S):\n{questions.strip()}\n\n"
-        "Rules:\n"
-        "- Answer each question directly and concisely (1-4 sentences), first person.\n"
-        "- Keep every answer consistent with the proposal above (same projects, links, rate, claims).\n"
-        "- Use hyphen bullets if listing; no asterisks, no emojis, no fabrication.\n"
-        "- If there are multiple questions, number the answers (1., 2., 3.) to match their order.\n"
-        "- Output only the paste-ready answer text. No preamble.\n"
+        f"CLIENT'S SCREENING QUESTIONS (there may be several in this text):\n{questions.strip()}\n\n"
+        "Identify EACH distinct question and answer it separately.\n"
+        "Return JSON only: {\"answers\":[{\"question\":\"...\",\"answer\":\"...\"}]}, one object "
+        "per question, in the order asked.\n"
+        "Each answer: 1-4 sentences, first person, consistent with the proposal (same projects, "
+        "links, rate, claims), hyphen bullets if listing, no asterisks, no emojis, no fabrication, "
+        "paste-ready with no preamble.\n"
     )
-    return _gemini_generate(prompt, json_mode=False, max_tokens=2048)
+    raw = _gemini_generate(prompt, json_mode=True, max_tokens=4096)
+    if not raw:
+        return None
+    try:
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        arr = json.loads(m.group(0) if m else raw).get("answers") or []
+        out = [((x.get("question") or "").strip(), (x.get("answer") or "").strip())
+               for x in arr if (x.get("answer") or "").strip()]
+        return out or None
+    except Exception:
+        # salvage: at least return the raw text as a single answer
+        return [("", raw.strip())]
 
 
 def _extract_cover(raw):
@@ -784,8 +800,10 @@ def _handle_callback(cq, store):
         chunks = format_proposal_messages(raw)
         for i, chunk in enumerate(chunks):
             last = i == len(chunks) - 1
-            tg_reply(chat_id, mid, chunk,
-                     reply_markup=_proposal_buttons(data[2:]) if last else None)
+            sent_id = tg_reply(chat_id, mid, chunk,
+                               reply_markup=_proposal_buttons(data[2:]) if last else None)
+            if i == 0 and sent_id:
+                job["proposal_mid"] = sent_id       # answers will reply to this
             time.sleep(0.4)
 
     elif data.startswith("q:"):                     # Answer screening questions
@@ -830,12 +848,16 @@ def _handle_message(msg, store):
     aw["ts"] = time.time()                          # keep armed for follow-up questions
     print(f"[info] answering questions for: {job['title'][:50]!r}")
     answers = generate_answers(job, text)
-    if answers:
-        for chunk in _chunk(answers):
-            tg_reply(chat_id, mid, chunk)
-            time.sleep(0.3)
-    else:
+    if not answers:
         tg_reply(chat_id, mid, "⚠️ Couldn't generate answers. Send the question again.")
+        return
+    # One message PER answer, replying to the proposal, so each is easy to copy-paste.
+    # The answer sits in a <pre> block -> Telegram shows a one-tap Copy button on it.
+    target = job.get("proposal_mid") or mid
+    for i, (q, a) in enumerate(answers, 1):
+        head = f"<b>❓ {esc(q)}</b>\n" if q else f"<b>Answer {i}</b>\n"
+        tg_reply(chat_id, target, f"{head}<pre>{esc(a)}</pre>", parse_mode="HTML")
+        time.sleep(0.35)
 
 
 def handle_updates(cfg, long_poll=0):

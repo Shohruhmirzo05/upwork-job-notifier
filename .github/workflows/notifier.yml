@@ -21,7 +21,7 @@ permissions:
 jobs:
   notify:
     runs-on: ubuntu-latest
-    timeout-minutes: 20   # loop runs ~17 min, leaving margin for setup + cache save
+    timeout-minutes: 24   # loop runs ~17 min; margin for setup + slow final check + cache save
     steps:
       - uses: actions/checkout@v4
 

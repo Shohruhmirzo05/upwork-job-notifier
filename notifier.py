@@ -5,10 +5,11 @@ Upwork -> Telegram recent-jobs notifier.
 Runs statelessly (built for GitHub Actions cron). Each run:
   1. Grabs a visitor GraphQL token from upwork.com (curl_cffi Chrome TLS impersonation).
   2. Queries Upwork's public job search GraphQL API, sorted by recency.
-  3. Filters by your KEYWORDS / EXCLUDE_KEYWORDS.
+  3. Scores each job with a LOCAL, zero-cost weighted-keyword engine (filters.json).
   4. Dedupes against seen.json (committed back by the workflow).
-  5. Sends each genuinely-new job to your Telegram chat.
+  5. Sends each genuinely-new job that clears your score threshold to Telegram.
 
+No AI, no API costs — all filtering is deterministic keyword matching you fully control.
 First run seeds the baseline silently (so you don't get blasted).
 
 Method credit: adapted from asaniczka/Upwork-Job-Scraper (public GraphQL + visitor
@@ -21,7 +22,6 @@ import random
 import re
 import sys
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 from curl_cffi import requests
@@ -30,27 +30,12 @@ from curl_cffi import requests
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 WEBSHARE_URL = os.environ.get("WEBSHARE_URL", "").strip()  # optional; empty = go direct
-KEYWORDS = [k.strip().lower() for k in os.environ.get("KEYWORDS", "").split(",") if k.strip()]
-EXCLUDE = [k.strip().lower() for k in os.environ.get("EXCLUDE_KEYWORDS", "").split(",") if k.strip()]
 MAX_PAGES = int(os.environ.get("MAX_PAGES", "2"))     # 50 jobs/page
 PAGE_SIZE = 50
-MAX_NOTIFS = int(os.environ.get("MAX_NOTIFS", "15"))  # cap per run to avoid flood
+MAX_NOTIFS = int(os.environ.get("MAX_NOTIFS", "20"))  # cap per run to avoid flood
 SEEN_TTL_DAYS = int(os.environ.get("SEEN_TTL_DAYS", "5"))
 SEEN_PATH = Path(os.environ.get("SEEN_PATH", "seen.json"))
-
-# ---------- AI scoring (optional; set ANTHROPIC_API_KEY to enable) ----------
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-MIN_SCORE = int(os.environ.get("MIN_SCORE", "7"))     # only notify jobs scored >= this
-SCORE_MODEL = os.environ.get("SCORE_MODEL", "claude-haiku-4-5-20251001").strip()
-PROFILE = os.environ.get("PROFILE", "").strip()
-ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
-DEFAULT_PROFILE = (
-    "Senior mobile + AI developer. Strong in SwiftUI, iOS, Swift, Flutter, and "
-    "cross-platform mobile apps, plus AI agent / LLM integration work (OpenAI, "
-    "Anthropic Claude) and Supabase backends. Wants well-scoped jobs from serious "
-    "clients with real budgets. Not interested in WordPress, PHP, data entry, or "
-    "generic virtual-assistant work."
-)
+FILTERS_PATH = Path(os.environ.get("FILTERS_PATH", "filters.json"))
 
 UPWORK_HOME = "https://www.upwork.com/"
 GRAPHQL_URL = "https://www.upwork.com/api/graphql/v1"
@@ -93,6 +78,104 @@ HEADERS_BASE = {
     "X-Upwork-Accept-Language": "en-US",
     "Content-Type": "application/json",
 }
+
+
+# =====================================================================
+# LOCAL FILTER ENGINE  (no AI, no cost)
+# =====================================================================
+# Rules live in filters.json (see that file for the full annotated example):
+#   {
+#     "require_any": [...],   # job must match >=1 of these (empty list = allow all)
+#     "exclude":     [...],   # reject the job if it matches ANY of these
+#     "boost":       {term: weight, ...},  # +weight to score per matched term
+#     "title_multiplier": 2,  # matches in the TITLE count this many times
+#     "min_score": 1,         # drop jobs scoring below this
+#     "word_boundary": true   # match whole words ("ios" != "kiosk")
+#   }
+# Env vars KEYWORDS / EXCLUDE_KEYWORDS still work as a fallback if filters.json
+# is absent, so nothing breaks if you'd rather keep it simple.
+
+DEFAULT_FILTERS = {
+    "require_any": [k.strip().lower()
+                    for k in os.environ.get("KEYWORDS", "").split(",") if k.strip()],
+    "exclude": [k.strip().lower()
+                for k in os.environ.get("EXCLUDE_KEYWORDS", "").split(",") if k.strip()],
+    "boost": {},
+    "title_multiplier": 2,
+    "min_score": 1,
+    "word_boundary": True,
+}
+
+
+def _compile_term(term, word_boundary):
+    """Compile one keyword to a regex. Word-boundary aware but tolerant of
+    symbols like c++, c#, node.js — so those still match sanely."""
+    term = term.lower().strip()
+    esc = re.escape(term)
+    if word_boundary:
+        # (?<![a-z0-9]) / (?![a-z0-9]) instead of \b so "c++" and "node.js" work.
+        return re.compile(rf"(?<![a-z0-9]){esc}(?![a-z0-9])")
+    return re.compile(esc)
+
+
+def load_filters():
+    """Read filters.json if present, else fall back to env KEYWORDS/EXCLUDE.
+    Returns a dict with pre-compiled regex lists for speed over many terms."""
+    cfg = dict(DEFAULT_FILTERS)
+    if FILTERS_PATH.exists():
+        try:
+            user = json.loads(FILTERS_PATH.read_text())
+            for key in ("require_any", "exclude", "boost",
+                        "title_multiplier", "min_score", "word_boundary"):
+                if key in user:
+                    cfg[key] = user[key]
+        except Exception as e:
+            print(f"[warn] filters.json unreadable ({e}); using env fallback", file=sys.stderr)
+
+    wb = bool(cfg.get("word_boundary", True))
+    cfg["_require"] = [(t, _compile_term(t, wb)) for t in cfg.get("require_any", []) if t]
+    cfg["_exclude"] = [(t, _compile_term(t, wb)) for t in cfg.get("exclude", []) if t]
+    cfg["_boost"] = [(t, float(w), _compile_term(t, wb))
+                     for t, w in (cfg.get("boost", {}) or {}).items() if t]
+    return cfg
+
+
+def score_job(job, cfg):
+    """Deterministic local score. Returns (passes: bool, score: int, matched: list).
+    passes is False if excluded, no required match, or score < min_score."""
+    title = job["title"].lower()
+    body = " ".join([job["title"], job["description"], " ".join(job["skills"])]).lower()
+
+    # hard exclude
+    for term, rx in cfg["_exclude"]:
+        if rx.search(body):
+            return (False, 0, [])
+
+    matched = []
+    score = 0.0
+    tmult = float(cfg.get("title_multiplier", 2))
+
+    # required keywords: must hit at least one (unless no require list = allow all)
+    req_hits = 0
+    for term, rx in cfg["_require"]:
+        if rx.search(body):
+            req_hits += 1
+            matched.append(term)
+            score += tmult if rx.search(title) else 1.0
+    if cfg["_require"] and req_hits == 0:
+        return (False, 0, [])
+
+    # weighted boosts (prioritize the jobs you care most about)
+    for term, weight, rx in cfg["_boost"]:
+        if rx.search(body):
+            if term not in matched:
+                matched.append(term)
+            score += weight * (tmult if rx.search(title) else 1.0)
+
+    score = int(round(score))
+    if score < int(cfg.get("min_score", 1)):
+        return (False, score, matched)
+    return (True, score, matched)
 
 
 # ---------- proxy ----------
@@ -158,79 +241,6 @@ def parse_job(r):
     }
 
 
-# ---------- filtering ----------
-def matches(job):
-    hay = " ".join([job["title"], job["description"], " ".join(job["skills"])]).lower()
-    if EXCLUDE and any(x in hay for x in EXCLUDE):
-        return False
-    if not KEYWORDS:
-        return True  # no keywords set = everything (not recommended)
-    return any(k in hay for k in KEYWORDS)
-
-
-# ---------- ai scoring ----------
-def score_jobs(jobs):
-    """Rate each job 1-10 vs the profile in ONE batched Claude call.
-
-    Returns a list of (score:int, reason:str) aligned to `jobs`, or None if
-    scoring is disabled/failed (caller then sends every job unscored).
-    Only fresh, post-dedup jobs are ever passed here, so this is ~1 cheap call/run.
-    """
-    if not ANTHROPIC_API_KEY or not jobs:
-        return None
-    profile = PROFILE or DEFAULT_PROFILE
-    listing = []
-    for i, j in enumerate(jobs):
-        skills = ", ".join(j["skills"][:8])
-        desc = j["description"][:600].replace("\n", " ").strip()
-        listing.append(
-            f"[{i}] title: {j['title']}\n"
-            f"    budget: {fmt_budget(j)} | tier: {j['tier'] or 'n/a'}\n"
-            f"    skills: {skills}\n"
-            f"    desc: {desc}"
-        )
-    prompt = (
-        "You screen freelance Upwork jobs for a developer with this profile:\n\n"
-        f"{profile}\n\n"
-        "Rate how well each job below fits this profile from 1 to 10 "
-        "(10 = strong fit, worth applying now; 1 = irrelevant). Weigh skill match, "
-        "budget quality, and how well-scoped/serious the client seems.\n\n"
-        f"Jobs:\n{chr(10).join(listing)}\n\n"
-        "Respond with ONLY a JSON array, one object per job in the same order:\n"
-        '[{"i":0,"score":8,"reason":"<=12 words why"}]\n'
-        "No prose, no markdown fences."
-    )
-    body = {
-        "model": SCORE_MODEL,
-        "max_tokens": 1024,
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    try:
-        r = requests.post(
-            ANTHROPIC_URL,
-            headers={
-                "x-api-key": ANTHROPIC_API_KEY,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json=body,
-            timeout=60,
-        )
-        r.raise_for_status()
-        text = r.json()["content"][0]["text"]
-        m = re.search(r"\[.*\]", text, re.DOTALL)  # tolerate stray fences/prose
-        arr = json.loads(m.group(0) if m else text)
-        by_i = {}
-        for o in arr:
-            by_i[int(o["i"])] = (int(o["score"]), str(o.get("reason", "")).strip())
-        # Missing/malformed entries default to MIN_SCORE so a keyword hit is never
-        # silently lost to a scoring hiccup — it just gets sent without a reason.
-        return [by_i.get(i, (MIN_SCORE, "")) for i in range(len(jobs))]
-    except Exception as e:
-        print(f"[warn] scoring failed ({e}); sending unscored", file=sys.stderr)
-        return None
-
-
 # ---------- telegram ----------
 def fmt_budget(job):
     if job["job_type"] == "HOURLY":
@@ -251,10 +261,11 @@ def send(job):
     tier = f" · {job['tier'].title()}" if job["tier"] else ""
     skills = ", ".join(job["skills"][:6])
     desc = job["description"][:280].strip()
+    matched = ", ".join(job.get("matched", [])[:6])
     score_line = ""
     if job.get("score") is not None:
-        reason = f" — {esc(job['reason'])}" if job.get("reason") else ""
-        score_line = f"⭐ <b>{job['score']}/10</b>{reason}\n"
+        mtxt = f" — {esc(matched)}" if matched else ""
+        score_line = f"⭐ <b>{job['score']}</b>{mtxt}\n"
     msg = (
         f"🟢 <b>{esc(job['title'][:120])}</b>\n"
         + score_line
@@ -302,6 +313,10 @@ def main():
     if not BOT_TOKEN or not CHAT_ID:
         sys.exit("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID")
 
+    cfg = load_filters()
+    print(f"[info] filters: {len(cfg['_require'])} required, {len(cfg['_exclude'])} excluded, "
+          f"{len(cfg['_boost'])} boosts, min_score={cfg.get('min_score')}")
+
     proxy = get_proxy_dict()
     token = get_token(proxy)
 
@@ -314,8 +329,17 @@ def main():
             print(f"[warn] page offset {offset} failed: {e}", file=sys.stderr)
 
     print(f"[info] fetched {len(jobs)} jobs")
-    hits = [j for j in jobs if j["cipher"] and matches(j)]
-    print(f"[info] {len(hits)} match filters")
+
+    # score every job locally
+    hits = []
+    for j in jobs:
+        if not j["cipher"]:
+            continue
+        passes, score, matched = score_job(j, cfg)
+        if passes:
+            j["score"], j["matched"] = score, matched
+            hits.append(j)
+    print(f"[info] {len(hits)} pass filters")
 
     seen = load_seen()
     now = time.time()
@@ -323,29 +347,16 @@ def main():
     if seen is None:  # first run: seed silently
         seed = {j["cipher"]: now for j in jobs if j["cipher"]}
         save_seen(seed)
-        ai = f" AI-scoring on (≥{MIN_SCORE}/10)." if ANTHROPIC_API_KEY else ""
         send_plain(f"✅ Upwork notifier armed. Watching {len(seed)} jobs. "
-                   f"You'll get pings for new {'/'.join(KEYWORDS) or 'all'} jobs.{ai}")
+                   f"You'll get pings for new matching jobs (local keyword scoring, no AI).")
         print("[info] seeded baseline, no notifications sent")
         return
 
     fresh = [j for j in hits if j["cipher"] not in seen]
-    fresh.sort(key=lambda j: j["publish"])  # oldest first
+    fresh.sort(key=lambda j: -j["score"])  # best score first
+    print(f"[info] {len(fresh)} new to notify")
 
-    # Optional AI scoring layer: rate the fresh keyword hits, keep only >= MIN_SCORE.
-    scores = score_jobs(fresh)
-    if scores is not None:
-        for j, (sc, reason) in zip(fresh, scores):
-            j["score"], j["reason"] = sc, reason
-        kept = [j for j in fresh if j["score"] >= MIN_SCORE]
-        kept.sort(key=lambda j: -j["score"])  # best first
-        print(f"[info] scoring on: {len(kept)}/{len(fresh)} scored >= {MIN_SCORE}")
-        to_notify = kept
-    else:
-        to_notify = fresh
-    print(f"[info] {len(to_notify)} new to notify")
-
-    for j in to_notify[:MAX_NOTIFS]:
+    for j in fresh[:MAX_NOTIFS]:
         send(j)
         time.sleep(0.6)  # gentle on Telegram rate limits
 

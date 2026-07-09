@@ -33,14 +33,11 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           WEBSHARE_URL: ${{ secrets.WEBSHARE_URL }}   # optional; leave unset to go direct
+          MAX_PAGES: ${{ vars.MAX_PAGES }}
+          MAX_NOTIFS: ${{ vars.MAX_NOTIFS }}
+          # KEYWORDS/EXCLUDE_KEYWORDS are only a fallback if filters.json is missing.
           KEYWORDS: ${{ vars.KEYWORDS }}
           EXCLUDE_KEYWORDS: ${{ vars.EXCLUDE_KEYWORDS }}
-          MAX_PAGES: ${{ vars.MAX_PAGES }}
-          # Optional AI scoring — set the ANTHROPIC_API_KEY secret to enable
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          MIN_SCORE: ${{ vars.MIN_SCORE }}
-          SCORE_MODEL: ${{ vars.SCORE_MODEL }}
-          PROFILE: ${{ vars.PROFILE }}
         run: python notifier.py
 
       - name: Persist seen.json

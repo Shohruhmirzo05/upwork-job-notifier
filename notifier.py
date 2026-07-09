@@ -44,6 +44,9 @@ def _int_env(name, default):
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 WEBSHARE_URL = os.environ.get("WEBSHARE_URL", "").strip()  # optional; empty = go direct
+# Dead-man's-switch: ping this URL on every successful run. If pings stop (workflow died),
+# the external monitor (e.g. healthchecks.io) alerts you. Empty = disabled.
+HEALTHCHECK_URL = os.environ.get("HEALTHCHECK_URL", "").strip()
 MAX_PAGES = _int_env("MAX_PAGES", 2)          # only used if no search_queries
 PAGE_SIZE = 50
 JOBS_PER_QUERY = _int_env("JOBS_PER_QUERY", 50)  # newest N per search lane
@@ -454,6 +457,16 @@ def send_plain(text):
     )
 
 
+def ping_healthcheck():
+    """Signal 'I'm alive' to an external dead-man's-switch monitor. No-op if unset."""
+    if not HEALTHCHECK_URL:
+        return
+    try:
+        requests.get(HEALTHCHECK_URL, timeout=10)
+    except Exception as e:
+        print(f"[warn] healthcheck ping failed: {e}", file=sys.stderr)
+
+
 # ---------- state ----------
 def load_seen():
     if not SEEN_PATH.exists():
@@ -512,6 +525,7 @@ def main():
                    f"{len(cfg.get('search_queries') or [])} search lanes. "
                    f"You'll get HOT/GOOD/MAYBE pings for new matching jobs (no AI, local scoring).")
         print("[info] seeded baseline, no notifications sent")
+        ping_healthcheck()
         return
 
     fresh = [j for j in hits if j["cipher"] not in seen]
@@ -549,6 +563,7 @@ def main():
         if c and c not in overflow:
             seen[c] = now
     save_seen(seen)
+    ping_healthcheck()
     print("[info] done")
 
 

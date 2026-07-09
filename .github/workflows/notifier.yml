@@ -2,80 +2,134 @@ name: Upwork Job Notifier
 
 on:
   schedule:
-    # Restart heartbeat. GitHub DROPS scheduled runs under load, so we fire every 5 min
-    # AND make each run last ~17 min — that's ~3 restart chances per run, so a dropped
-    # cron tick can't open a coverage gap. Runs chain back-to-back (concurrency below).
-    - cron: "*/5 * * * *"
-  workflow_dispatch: {}   # lets you run it manually from the Actions tab
+    # RESTART HEARTBEAT ONLY. The job below loops internally for ~5.3 hours, so we do
+    # NOT depend on the (unreliable) scheduler firing every few minutes — it only has to
+    # fire ~once every 5h to relaunch after a run ends. */15 is frequent enough for that
+    # while being far less likely to be throttled/dropped than an aggressive */5.
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
 
-# One run at a time; the next queued run starts as soon as the current finishes
-# (its dedup cache is saved on exit) -> gap-free chaining, no cache races.
+# One run at a time. When the long run ends, the next queued/heartbeat run starts.
 concurrency:
   group: upwork-notifier
   cancel-in-progress: false
 
-# Read-only: dedup state lives in the Actions cache, not the repo — no commits.
 permissions:
   contents: read
 
 jobs:
   notify:
     runs-on: ubuntu-latest
-    timeout-minutes: 24   # loop runs ~17 min; margin for setup + slow final check + cache save
+    timeout-minutes: 350   # ~5.8h, under the 6h hard cap; loop exits ~5.3h
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      WEBSHARE_URL: ${{ secrets.WEBSHARE_URL }}
+      HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}   # dead-man's-switch (optional)
+      MAX_PAGES: ${{ vars.MAX_PAGES }}
+      MAX_NOTIFS: ${{ vars.MAX_NOTIFS }}
+      MAX_AGE_HOURS: ${{ vars.MAX_AGE_HOURS }}
+      JOBS_PER_QUERY: ${{ vars.JOBS_PER_QUERY }}
+      KEYWORDS: ${{ vars.KEYWORDS }}
+      EXCLUDE_KEYWORDS: ${{ vars.EXCLUDE_KEYWORDS }}
+      CHECK_INTERVAL: ${{ vars.CHECK_INTERVAL }}
+      CYCLE_SECONDS: "2400"   # each cycle loops 40 min, then state is cached
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip   # cache curl_cffi wheel -> faster runs
-
+          cache: pip
       - name: Install deps
         run: pip install -r requirements.txt
 
-      # Restore the most recent seen.json from cache (prefix match on restore-keys).
-      # Missing on the very first run -> notifier seeds a fresh baseline silently.
+      # Restore the latest dedup state saved by any previous cycle/run.
       - name: Restore dedup state
         uses: actions/cache/restore@v4
         with:
           path: seen.json
-          key: upwork-seen-${{ github.run_id }}
+          key: upwork-seen-${{ github.run_id }}-restore
           restore-keys: |
             upwork-seen-
 
-      - name: Run notifier (fast loop)
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          WEBSHARE_URL: ${{ secrets.WEBSHARE_URL }}   # optional; leave unset to go direct
-          MAX_PAGES: ${{ vars.MAX_PAGES }}
-          MAX_NOTIFS: ${{ vars.MAX_NOTIFS }}
-          MAX_AGE_HOURS: ${{ vars.MAX_AGE_HOURS }}
-          JOBS_PER_QUERY: ${{ vars.JOBS_PER_QUERY }}
-          # KEYWORDS/EXCLUDE_KEYWORDS are only a fallback if filters.json is missing.
-          KEYWORDS: ${{ vars.KEYWORDS }}
-          EXCLUDE_KEYWORDS: ${{ vars.EXCLUDE_KEYWORDS }}
-          # loop knobs (seconds); override via repo Variables if you like
-          LOOP_SECONDS: ${{ vars.LOOP_SECONDS }}
-          CHECK_INTERVAL: ${{ vars.CHECK_INTERVAL }}
-        run: |
-          LOOP_SECONDS="${LOOP_SECONDS:-1020}"     # ~17 min of checking, then exit cleanly
-          CHECK_INTERVAL="${CHECK_INTERVAL:-90}"   # ~90s between checks
-          i=0
-          while [ "$SECONDS" -lt "$LOOP_SECONDS" ]; do
-            i=$((i + 1))
-            echo "::group::check #$i (t=${SECONDS}s)"
-            python notifier.py || echo "check #$i failed, continuing"
-            echo "::endgroup::"
-            [ "$SECONDS" -lt "$LOOP_SECONDS" ] && sleep "$CHECK_INTERVAL"
-          done
-          echo "loop finished after $i checks (${SECONDS}s)"
-
-      # Save the updated seen.json so the next run dedupes against it.
-      # always() -> persists even if the last check in the loop errored.
-      - name: Save dedup state
+      # 8 cycles x 40 min = ~5.3h of continuous ~90s checking. State is cached after each
+      # cycle so an unexpected death costs at most one cycle (~40 min) of dedup.
+      - name: Cycle 1
+        continue-on-error: true
+        run: bash ./run_cycle.sh
+      - name: Save state 1
         if: always()
         uses: actions/cache/save@v4
         with:
           path: seen.json
-          key: upwork-seen-${{ github.run_id }}
+          key: upwork-seen-${{ github.run_id }}-1
+
+      - name: Cycle 2
+        continue-on-error: true
+        run: bash ./run_cycle.sh
+      - name: Save state 2
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: seen.json
+          key: upwork-seen-${{ github.run_id }}-2
+
+      - name: Cycle 3
+        continue-on-error: true
+        run: bash ./run_cycle.sh
+      - name: Save state 3
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: seen.json
+          key: upwork-seen-${{ github.run_id }}-3
+
+      - name: Cycle 4
+        continue-on-error: true
+        run: bash ./run_cycle.sh
+      - name: Save state 4
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: seen.json
+          key: upwork-seen-${{ github.run_id }}-4
+
+      - name: Cycle 5
+        continue-on-error: true
+        run: bash ./run_cycle.sh
+      - name: Save state 5
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: seen.json
+          key: upwork-seen-${{ github.run_id }}-5
+
+      - name: Cycle 6
+        continue-on-error: true
+        run: bash ./run_cycle.sh
+      - name: Save state 6
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: seen.json
+          key: upwork-seen-${{ github.run_id }}-6
+
+      - name: Cycle 7
+        continue-on-error: true
+        run: bash ./run_cycle.sh
+      - name: Save state 7
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: seen.json
+          key: upwork-seen-${{ github.run_id }}-7
+
+      - name: Cycle 8
+        continue-on-error: true
+        run: bash ./run_cycle.sh
+      - name: Save state 8
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: seen.json
+          key: upwork-seen-${{ github.run_id }}-8

@@ -4,10 +4,13 @@ Upwork -> Telegram recent-jobs notifier.
 
 Runs statelessly (built for GitHub Actions cron). Each run:
   1. Grabs a visitor GraphQL token from upwork.com (curl_cffi Chrome TLS impersonation).
-  2. Queries Upwork's public job search GraphQL API, sorted by recency.
+  2. Runs several SCOPED searches (search_queries in filters.json), newest-first, and
+     merges + dedupes the results by job id. This beats scanning only the newest global
+     jobs — you get deep coverage of your niche instead of a shallow slice of everything.
   3. Scores each job with a LOCAL, zero-cost weighted-keyword engine (filters.json).
   4. Dedupes against seen.json (committed back by the workflow).
-  5. Sends each genuinely-new job that clears your score threshold to Telegram.
+  5. Sends each genuinely-new job scoring >= min_score to Telegram, tagged HOT/GOOD/MAYBE,
+     best score first.
 
 No AI, no API costs — all filtering is deterministic keyword matching you fully control.
 First run seeds the baseline silently (so you don't get blasted).
@@ -22,6 +25,7 @@ import random
 import re
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from curl_cffi import requests
@@ -30,10 +34,11 @@ from curl_cffi import requests
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 WEBSHARE_URL = os.environ.get("WEBSHARE_URL", "").strip()  # optional; empty = go direct
-MAX_PAGES = int(os.environ.get("MAX_PAGES", "2"))     # 50 jobs/page
+MAX_PAGES = int(os.environ.get("MAX_PAGES", "2"))          # only used if no search_queries
 PAGE_SIZE = 50
-MAX_NOTIFS = int(os.environ.get("MAX_NOTIFS", "20"))  # cap per run to avoid flood
-SEEN_TTL_DAYS = int(os.environ.get("SEEN_TTL_DAYS", "5"))
+JOBS_PER_QUERY = int(os.environ.get("JOBS_PER_QUERY", "50"))  # newest N per search lane
+MAX_NOTIFS = int(os.environ.get("MAX_NOTIFS", "25"))      # cap per run to avoid flood
+SEEN_TTL_DAYS = int(os.environ.get("SEEN_TTL_DAYS", "7"))
 SEEN_PATH = Path(os.environ.get("SEEN_PATH", "seen.json"))
 FILTERS_PATH = Path(os.environ.get("FILTERS_PATH", "filters.json"))
 
@@ -83,17 +88,13 @@ HEADERS_BASE = {
 # =====================================================================
 # LOCAL FILTER ENGINE  (no AI, no cost)
 # =====================================================================
-# Rules live in filters.json (see that file for the full annotated example):
-#   {
-#     "require_any": [...],   # job must match >=1 of these (empty list = allow all)
-#     "exclude":     [...],   # reject the job if it matches ANY of these
-#     "boost":       {term: weight, ...},  # +weight to score per matched term
-#     "title_multiplier": 2,  # matches in the TITLE count this many times
-#     "min_score": 1,         # drop jobs scoring below this
-#     "word_boundary": true   # match whole words ("ios" != "kiosk")
-#   }
-# Env vars KEYWORDS / EXCLUDE_KEYWORDS still work as a fallback if filters.json
-# is absent, so nothing breaks if you'd rather keep it simple.
+# See filters.json for the annotated config. In short:
+#   exclude      -> reject the job if it matches ANY of these (checked first)
+#   require_any  -> job must match >=1 of these, else dropped (a GATE, adds no points)
+#   boost        -> term: weight; the score is the sum of matched boost weights,
+#                   with title matches counted `title_multiplier` times
+#   modifiers.min_score -> drop anything below it
+# Env KEYWORDS / EXCLUDE_KEYWORDS remain a fallback if filters.json is missing.
 
 DEFAULT_FILTERS = {
     "require_any": [k.strip().lower()
@@ -101,38 +102,49 @@ DEFAULT_FILTERS = {
     "exclude": [k.strip().lower()
                 for k in os.environ.get("EXCLUDE_KEYWORDS", "").split(",") if k.strip()],
     "boost": {},
+    "search_queries": [],
     "title_multiplier": 2,
-    "min_score": 1,
+    "min_score": 6,
+    "hot_min": 60,      # score >= this -> 🔥 HOT
+    "good_min": 30,     # score >= this -> 🟢 GOOD ; below -> 🟡 MAYBE (down to min_score)
     "word_boundary": True,
 }
 
 
 def _compile_term(term, word_boundary):
-    """Compile one keyword to a regex. Word-boundary aware but tolerant of
-    symbols like c++, c#, node.js — so those still match sanely."""
-    term = term.lower().strip()
-    esc = re.escape(term)
+    """Compile one keyword to a regex. Word-boundary aware but tolerant of symbols
+    like c++, c#, node.js, ci/cd, objective-c — so those still match sanely."""
+    esc = re.escape(term.lower().strip())
     if word_boundary:
-        # (?<![a-z0-9]) / (?![a-z0-9]) instead of \b so "c++" and "node.js" work.
+        # (?<![a-z0-9]) / (?![a-z0-9]) instead of \b so symbol-y terms still match.
         return re.compile(rf"(?<![a-z0-9]){esc}(?![a-z0-9])")
     return re.compile(esc)
 
 
 def load_filters():
-    """Read filters.json if present, else fall back to env KEYWORDS/EXCLUDE.
-    Returns a dict with pre-compiled regex lists for speed over many terms."""
+    """Read filters.json (falling back to env), returning a dict with pre-compiled
+    regexes. Supports both nested `modifiers` and top-level modifier keys."""
     cfg = dict(DEFAULT_FILTERS)
     if FILTERS_PATH.exists():
         try:
-            user = json.loads(FILTERS_PATH.read_text())
-            for key in ("require_any", "exclude", "boost",
-                        "title_multiplier", "min_score", "word_boundary"):
-                if key in user:
-                    cfg[key] = user[key]
+            raw = json.loads(FILTERS_PATH.read_text())
+            for key in ("require_any", "exclude", "boost", "search_queries"):
+                if key in raw:
+                    cfg[key] = raw[key]
+            mods = raw.get("modifiers", {}) or {}
+            for key in ("title_multiplier", "min_score", "hot_min", "good_min", "word_boundary"):
+                if key in mods:
+                    cfg[key] = mods[key]
+                elif key in raw:            # tolerate top-level too
+                    cfg[key] = raw[key]
         except Exception as e:
             print(f"[warn] filters.json unreadable ({e}); using env fallback", file=sys.stderr)
 
     wb = bool(cfg.get("word_boundary", True))
+    cfg["title_multiplier"] = float(cfg.get("title_multiplier", 2))
+    cfg["min_score"] = int(cfg.get("min_score", 6))
+    cfg["hot_min"] = int(cfg.get("hot_min", 60))
+    cfg["good_min"] = int(cfg.get("good_min", 30))
     cfg["_require"] = [(t, _compile_term(t, wb)) for t in cfg.get("require_any", []) if t]
     cfg["_exclude"] = [(t, _compile_term(t, wb)) for t in cfg.get("exclude", []) if t]
     cfg["_boost"] = [(t, float(w), _compile_term(t, wb))
@@ -141,41 +153,41 @@ def load_filters():
 
 
 def score_job(job, cfg):
-    """Deterministic local score. Returns (passes: bool, score: int, matched: list).
-    passes is False if excluded, no required match, or score < min_score."""
+    """Deterministic local score. Returns (passes: bool, score: int, matched: [terms]).
+    require_any is a gate (no points); the score is the sum of matched boost weights,
+    with title matches multiplied. Fails on exclude, no required match, or score < min."""
     title = job["title"].lower()
     body = " ".join([job["title"], job["description"], " ".join(job["skills"])]).lower()
 
-    # hard exclude
-    for term, rx in cfg["_exclude"]:
+    for _term, rx in cfg["_exclude"]:
         if rx.search(body):
             return (False, 0, [])
 
-    matched = []
-    score = 0.0
-    tmult = float(cfg.get("title_multiplier", 2))
-
-    # required keywords: must hit at least one (unless no require list = allow all)
-    req_hits = 0
-    for term, rx in cfg["_require"]:
-        if rx.search(body):
-            req_hits += 1
-            matched.append(term)
-            score += tmult if rx.search(title) else 1.0
-    if cfg["_require"] and req_hits == 0:
+    if cfg["_require"] and not any(rx.search(body) for _t, rx in cfg["_require"]):
         return (False, 0, [])
 
-    # weighted boosts (prioritize the jobs you care most about)
+    tmult = cfg["title_multiplier"]
+    score = 0.0
+    matched = []  # (term, weight) for display, ranked by weight
     for term, weight, rx in cfg["_boost"]:
         if rx.search(body):
-            if term not in matched:
-                matched.append(term)
             score += weight * (tmult if rx.search(title) else 1.0)
+            matched.append((term, weight))
 
     score = int(round(score))
-    if score < int(cfg.get("min_score", 1)):
-        return (False, score, matched)
-    return (True, score, matched)
+    matched.sort(key=lambda x: -x[1])
+    terms = [t for t, _w in matched]
+    if score < cfg["min_score"]:
+        return (False, score, terms)
+    return (True, score, terms)
+
+
+def tier_for(score, cfg):
+    if score >= cfg["hot_min"]:
+        return ("HOT", "🔥")
+    if score >= cfg["good_min"]:
+        return ("GOOD", "🟢")
+    return ("MAYBE", "🟡")
 
 
 # ---------- proxy ----------
@@ -205,15 +217,14 @@ def get_token(proxy):
     return token
 
 
-def fetch_page(token, proxy, offset):
+def fetch_page(token, proxy, offset, user_query="", count=PAGE_SIZE):
     headers = {**HEADERS_BASE, "Authorization": f"Bearer {token}"}
-    payload = {
-        "query": GRAPHQL_QUERY,
-        "variables": {"requestVariables": {
-            "sort": "recency", "highlight": True,
-            "paging": {"offset": offset, "count": PAGE_SIZE},
-        }},
-    }
+    # highlight:False -> clean title/description text (no <em>/control-char markers)
+    reqvars = {"sort": "recency", "highlight": False,
+               "paging": {"offset": offset, "count": count}}
+    if user_query:
+        reqvars["userQuery"] = user_query
+    payload = {"query": GRAPHQL_QUERY, "variables": {"requestVariables": reqvars}}
     resp = requests.post(GRAPHQL_URL, headers=headers, json=payload,
                          proxies=proxy, impersonate="chrome", timeout=25)
     resp.raise_for_status()
@@ -241,6 +252,37 @@ def parse_job(r):
     }
 
 
+def fetch_all_jobs(token, proxy, cfg):
+    """Run each search_query newest-first, merge, and dedupe by job id.
+    Falls back to newest-global pages if no search_queries are configured."""
+    by_cipher = {}
+    queries = [q for q in (cfg.get("search_queries") or []) if q]
+
+    if queries:
+        for q in queries:
+            try:
+                results = fetch_page(token, proxy, 0, user_query=q, count=JOBS_PER_QUERY)
+                for r in results:
+                    j = parse_job(r)
+                    if j["cipher"]:
+                        by_cipher.setdefault(j["cipher"], j)
+                print(f"[info] lane {q!r}: {len(results)} results")
+            except Exception as e:
+                print(f"[warn] lane {q!r} failed: {e}", file=sys.stderr)
+            time.sleep(0.3)  # be gentle on Upwork
+    else:
+        for offset in range(0, MAX_PAGES * PAGE_SIZE, PAGE_SIZE):
+            try:
+                for r in fetch_page(token, proxy, offset):
+                    j = parse_job(r)
+                    if j["cipher"]:
+                        by_cipher.setdefault(j["cipher"], j)
+            except Exception as e:
+                print(f"[warn] page offset {offset} failed: {e}", file=sys.stderr)
+
+    return list(by_cipher.values())
+
+
 # ---------- telegram ----------
 def fmt_budget(job):
     if job["job_type"] == "HOURLY":
@@ -253,30 +295,61 @@ def fmt_budget(job):
     return job["job_type"].title() or "—"
 
 
+def fmt_age(publish):
+    """Human 'posted X ago' from an ISO timestamp or epoch-ms. Empty on failure."""
+    if not publish:
+        return ""
+    try:
+        if isinstance(publish, (int, float)) or str(publish).isdigit():
+            dt = datetime.fromtimestamp(int(publish) / 1000, tz=timezone.utc)
+        else:
+            dt = datetime.fromisoformat(str(publish).replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        return ""
+    secs = (datetime.now(timezone.utc) - dt).total_seconds()
+    if secs < 60:
+        return "just now"
+    if secs < 3600:
+        return f"{int(secs // 60)}m ago"
+    if secs < 86400:
+        return f"{int(secs // 3600)}h ago"
+    return f"{int(secs // 86400)}d ago"
+
+
 def esc(t):
     return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def send(job):
-    tier = f" · {job['tier'].title()}" if job["tier"] else ""
+def build_message(job, cfg):
+    label, emoji = tier_for(job["score"], cfg)
+    age = fmt_age(job.get("publish", ""))
+    age_part = f" · 🕒 {age}" if age else ""
+    ctier = f" · {esc(job['tier'].title())}" if job["tier"] else ""
+    matched = ", ".join(job.get("matched", [])[:7])
     skills = ", ".join(job["skills"][:6])
-    desc = job["description"][:280].strip()
-    matched = ", ".join(job.get("matched", [])[:6])
-    score_line = ""
-    if job.get("score") is not None:
-        mtxt = f" — {esc(matched)}" if matched else ""
-        score_line = f"⭐ <b>{job['score']}</b>{mtxt}\n"
-    msg = (
-        f"🟢 <b>{esc(job['title'][:120])}</b>\n"
-        + score_line
-        + f"💰 {esc(fmt_budget(job))}{esc(tier)}\n"
-        + (f"🏷 {esc(skills)}\n" if skills else "")
-        + (f"\n{esc(desc)}…\n" if desc else "")
-        + f'\n<a href="{job["link"]}">Open on Upwork ↗</a>'
-    )
+    desc = job["description"][:300].strip()
+
+    lines = [
+        f"{emoji} <b>{label}</b> · score {job['score']}{age_part}",
+        f"<b>{esc(job['title'][:140])}</b>",
+        f"💰 {esc(fmt_budget(job))}{ctier}",
+    ]
+    if matched:
+        lines.append(f"🎯 {esc(matched)}")
+    if skills:
+        lines.append(f"🏷 {esc(skills)}")
+    if desc:
+        lines += ["", f"{esc(desc)}…"]
+    lines += ["", f'<a href="{job["link"]}">Open on Upwork ↗</a>']
+    return "\n".join(lines)
+
+
+def send(job, cfg):
     r = requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML",
+        json={"chat_id": CHAT_ID, "text": build_message(job, cfg), "parse_mode": "HTML",
               "disable_web_page_preview": True},
         timeout=15,
     )
@@ -315,31 +388,24 @@ def main():
 
     cfg = load_filters()
     print(f"[info] filters: {len(cfg['_require'])} required, {len(cfg['_exclude'])} excluded, "
-          f"{len(cfg['_boost'])} boosts, min_score={cfg.get('min_score')}")
+          f"{len(cfg['_boost'])} boosts, {len(cfg.get('search_queries') or [])} search lanes, "
+          f"min_score={cfg['min_score']}")
 
     proxy = get_proxy_dict()
     token = get_token(proxy)
 
-    jobs = []
-    for offset in range(0, MAX_PAGES * PAGE_SIZE, PAGE_SIZE):
-        try:
-            for r in fetch_page(token, proxy, offset):
-                jobs.append(parse_job(r))
-        except Exception as e:
-            print(f"[warn] page offset {offset} failed: {e}", file=sys.stderr)
+    jobs = fetch_all_jobs(token, proxy, cfg)
+    print(f"[info] fetched {len(jobs)} unique jobs across lanes")
 
-    print(f"[info] fetched {len(jobs)} jobs")
-
-    # score every job locally
     hits = []
     for j in jobs:
-        if not j["cipher"]:
-            continue
         passes, score, matched = score_job(j, cfg)
         if passes:
             j["score"], j["matched"] = score, matched
             hits.append(j)
-    print(f"[info] {len(hits)} pass filters")
+    hot = sum(1 for j in hits if j["score"] >= cfg["hot_min"])
+    good = sum(1 for j in hits if cfg["good_min"] <= j["score"] < cfg["hot_min"])
+    print(f"[info] {len(hits)} pass filters  (HOT={hot}, GOOD={good}, MAYBE={len(hits)-hot-good})")
 
     seen = load_seen()
     now = time.time()
@@ -347,8 +413,9 @@ def main():
     if seen is None:  # first run: seed silently
         seed = {j["cipher"]: now for j in jobs if j["cipher"]}
         save_seen(seed)
-        send_plain(f"✅ Upwork notifier armed. Watching {len(seed)} jobs. "
-                   f"You'll get pings for new matching jobs (local keyword scoring, no AI).")
+        send_plain(f"✅ Upwork notifier armed. Watching {len(seed)} jobs across "
+                   f"{len(cfg.get('search_queries') or [])} search lanes. "
+                   f"You'll get HOT/GOOD/MAYBE pings for new matching jobs (no AI, local scoring).")
         print("[info] seeded baseline, no notifications sent")
         return
 
@@ -357,7 +424,7 @@ def main():
     print(f"[info] {len(fresh)} new to notify")
 
     for j in fresh[:MAX_NOTIFS]:
-        send(j)
+        send(j, cfg)
         time.sleep(0.6)  # gentle on Telegram rate limits
 
     # mark everything we saw as seen (not just notified) so filters can change later

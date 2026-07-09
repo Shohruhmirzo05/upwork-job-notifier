@@ -1,19 +1,22 @@
 # Upwork → Telegram Job Notifier (serverless, GitHub Actions)
 
 Pushes new Upwork jobs matching your profile to Telegram, 24/7 in the cloud on GitHub
-Actions — **your computer can be off**. Cost: **$0** (free Actions minutes, no AI, no paid
-APIs). All filtering is deterministic keyword scoring you fully control.
+Actions — **your computer can be off**. Cost: **$0** (public repo = unlimited Actions
+minutes, no AI, no paid APIs). All filtering is deterministic keyword scoring you control.
 
 ## How it works
-Every ~10 min, a GitHub Actions cron:
-1. Gets a *visitor* GraphQL token from upwork.com (Chrome TLS impersonation via curl_cffi).
+The workflow runs continuously (each run loops internally, checking every ~90s; runs chain
+back-to-back), so you're pinged **~1–2 min after a matching job is posted**. Each check:
+1. Gets a *visitor* GraphQL token from upwork.com (Chrome TLS impersonation via curl_cffi),
+   **cached ~25 min** and reused across checks so the (403-prone) homepage is hit rarely.
 2. Runs **multiple scoped searches** (the `search_queries` in `filters.json`), newest-first,
-   and **merges + dedupes** the results by job id. This gives deep coverage of your niche
-   instead of a thin slice of the newest *global* jobs.
+   and **merges + dedupes** the results by job id — deep niche coverage, not a thin slice
+   of the newest *global* jobs.
 3. **Scores** each job with a local weighted-keyword engine (`filters.json`).
 4. Dedupes against `seen.json`, which persists in the **GitHub Actions cache** (no repo
    commits — history stays clean; if the cache is ever lost it just re-seeds silently).
-5. Sends each new job scoring ≥ `min_score` to Telegram — tagged **🔥 HOT / 🟢 GOOD / 🟡 MAYBE**,
+5. Skips anything posted more than `MAX_AGE_HOURS` (24h) ago.
+6. Sends each new job scoring ≥ `min_score` to Telegram — tagged **🔥 HOT / 🟢 GOOD / 🟡 MAYBE**,
    best score first, showing which keywords hit and how long ago it was posted.
 
 It **never logs in as you** — only public listings — so your Upwork account is not in the
@@ -79,8 +82,11 @@ Variables (simple comma lists).
 Repo → **Settings → Secrets and variables → Actions → Variables**:
 | Name | Meaning | Default |
 |------|---------|---------|
-| `MAX_NOTIFS` | max pings per run (best-scored first) | 25 |
+| `MAX_NOTIFS` | max pings per check (best-scored first) | 25 |
+| `MAX_AGE_HOURS` | never notify jobs older than this | 24 |
 | `JOBS_PER_QUERY` | newest jobs fetched per search lane | 50 |
+| `CHECK_INTERVAL` | seconds between checks inside a run | 90 |
+| `LOOP_SECONDS` | how long each run loops before it exits | 630 |
 
 ### Optional proxy (only if GitHub's IP gets blocked)
 If a run fails on the token/fetch: sign up free at **webshare.io**, copy the proxy-list

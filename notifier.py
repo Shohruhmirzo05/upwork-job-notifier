@@ -71,7 +71,9 @@ GEMINI_MODELS = [m.strip() for m in os.environ.get(
 ).split(",") if m.strip()]
 # Paid OpenAI fallback, used ONLY when free Gemini is exhausted/unavailable.
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.6-luna").strip()
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.5").strip()
+# low reasoning: enough for proposal writing, and stops reasoning tokens eating the output
+OPENAI_REASONING = os.environ.get("OPENAI_REASONING", "low").strip()
 AI_ENABLED = bool(GEMINI_API_KEY or OPENAI_API_KEY)
 PROFILE_PATH = Path(os.environ.get("PROFILE_PATH", "profile.md"))
 PROMPT_PATH = Path(os.environ.get("PROMPT_PATH", "proposal_prompt.md"))
@@ -626,6 +628,8 @@ def _openai_generate(prompt, json_mode=False, max_tokens=8192):
     body = {"model": OPENAI_MODEL,
             "messages": [{"role": "user", "content": prompt}],
             "max_completion_tokens": max_tokens}
+    if OPENAI_REASONING:
+        body["reasoning_effort"] = OPENAI_REASONING
     if json_mode:
         body["response_format"] = {"type": "json_object"}
     try:

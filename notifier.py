@@ -72,6 +72,7 @@ JOB_INTERVAL = _int_env("CHECK_INTERVAL", 90)   # seconds between job scans in s
 SERVE_SECONDS = _int_env("SERVE_SECONDS", 0)    # >0 -> run the serve loop this many seconds
 STORE_PATH = Path(os.environ.get("STORE_PATH", "store.json"))
 STORE_TTL_HOURS = _int_env("STORE_TTL_HOURS", 26)  # keep tapped-job details this long
+AWAITING_TTL_SEC = _int_env("AWAITING_TTL_SEC", 1800)  # "send questions" mode stays armed this long
 
 UPWORK_HOME = "https://www.upwork.com/"
 GRAPHQL_URL = "https://www.upwork.com/api/graphql/v1"
@@ -491,14 +492,15 @@ def answer_callback(callback_id, text=""):
         print(f"[warn] answerCallback failed: {e}", file=sys.stderr)
 
 
-def tg_reply(chat_id, reply_to_message_id, text):
+def tg_reply(chat_id, reply_to_message_id, text, reply_markup=None):
+    payload = {"chat_id": chat_id, "text": text[:4000],
+               "reply_to_message_id": reply_to_message_id,
+               "disable_web_page_preview": True}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     try:
-        requests.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-            json={"chat_id": chat_id, "text": text[:4000],
-                  "reply_to_message_id": reply_to_message_id,
-                  "disable_web_page_preview": True}, timeout=20,
-        )
+        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                      json=payload, timeout=20)
     except Exception as e:
         print(f"[warn] tg_reply failed: {e}", file=sys.stderr)
 
@@ -560,21 +562,15 @@ def _fallback_prompt(job):
     )
 
 
-def generate_proposal(job):
-    """Call Gemini's free tier with the proposal-brain prompt. Returns the raw model text
-    (JSON string from the brain, or plain text from the fallback). None on failure/disabled."""
+def _gemini_generate(prompt, json_mode=False, max_tokens=8192):
+    """One Gemini call with retries. thinking disabled so long outputs don't get truncated.
+    Key goes in a header (not the URL) so it can't leak via URL logging."""
     if not GEMINI_API_KEY:
         return None
-    template = load_prompt_template()
-    use_json = bool(template)
-    prompt = _fill_prompt(job, template) if template else _fallback_prompt(job)
-    # High token budget + thinking disabled so the JSON can't get truncated mid-proposal
-    # (2.5-flash "thinking" otherwise eats the budget). thinkingConfig is safe to send.
-    gen_cfg = {"temperature": 0.6, "maxOutputTokens": 8192,
+    gen_cfg = {"temperature": 0.6, "maxOutputTokens": max_tokens,
                "thinkingConfig": {"thinkingBudget": 0}}
-    if use_json:
+    if json_mode:
         gen_cfg["responseMimeType"] = "application/json"
-    # Key goes in a header, not the URL query string, so it can't leak via URL logging.
     url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
            f"{GEMINI_MODEL}:generateContent")
     headers = {"x-goog-api-key": GEMINI_API_KEY}
@@ -587,8 +583,7 @@ def generate_proposal(job):
                 parts = (cands[0].get("content") or {}).get("parts") or [] if cands else []
                 text = "".join(p.get("text", "") for p in parts).strip()
                 return text or None
-            # 503 = model overloaded, 429 = rate (not daily) — worth a short retry.
-            if r.status_code in (503, 429) and attempt < 2:
+            if r.status_code in (503, 429) and attempt < 2:  # overloaded / transient rate
                 print(f"[warn] gemini {r.status_code}, retrying…", file=sys.stderr)
                 time.sleep(3 * (attempt + 1))
                 continue
@@ -599,6 +594,50 @@ def generate_proposal(job):
             if attempt < 2:
                 time.sleep(3 * (attempt + 1))
     return None
+
+
+def generate_proposal(job):
+    """Draft a proposal with the proposal-brain prompt. Returns raw model text or None."""
+    template = load_prompt_template()
+    use_json = bool(template)
+    prompt = _fill_prompt(job, template) if template else _fallback_prompt(job)
+    return _gemini_generate(prompt, json_mode=use_json)
+
+
+def generate_answers(job, questions):
+    """Answer the client's screening questions, consistent with the proposal already sent."""
+    profile = load_profile()
+    proposal = job.get("proposal") or "(proposal text not stored)"
+    prompt = (
+        "You answer Upwork screening questions for this freelancer, in his first-person voice, "
+        "fully consistent with the proposal already sent and his profile. Never fabricate.\n\n"
+        f"PROFILE:\n{profile}\n\n"
+        f"PROPOSAL ALREADY SENT FOR THIS JOB:\n{proposal}\n\n"
+        f"JOB:\nTitle: {job.get('title', '')}\n"
+        f"Description: {(job.get('description') or '')[:1200]}\n\n"
+        f"CLIENT'S SCREENING QUESTION(S):\n{questions.strip()}\n\n"
+        "Rules:\n"
+        "- Answer each question directly and concisely (1-4 sentences), first person.\n"
+        "- Keep every answer consistent with the proposal above (same projects, links, rate, claims).\n"
+        "- Use hyphen bullets if listing; no asterisks, no emojis, no fabrication.\n"
+        "- If there are multiple questions, number the answers (1., 2., 3.) to match their order.\n"
+        "- Output only the paste-ready answer text. No preamble.\n"
+    )
+    return _gemini_generate(prompt, json_mode=False, max_tokens=2048)
+
+
+def _extract_cover(raw):
+    """Pull the cover_letter out of the proposal JSON (for storing, to align answers)."""
+    if not raw:
+        return None
+    try:
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        d = json.loads(m.group(0) if m else raw)
+        if isinstance(d, dict):
+            return (d.get("cover_letter") or "").strip() or None
+    except Exception:
+        pass
+    return _salvage_field(raw, "cover_letter")
 
 
 def _chunk(text, limit=4000):
@@ -705,13 +744,107 @@ def remember_job(store, job):
     }
 
 
-# ---------- button-tap handling ----------
-def handle_callbacks(cfg, long_poll=0):
-    """Poll Telegram for 'Generate Proposal' taps; write + reply a draft for each."""
+# ---------- button + message handling ----------
+def _authorized(chat_id):
+    """Only respond to the configured chat (the bot is public; ignore everyone else)."""
+    return CHAT_ID and str(chat_id) == str(CHAT_ID)
+
+
+def _proposal_buttons(cipher):
+    return {"inline_keyboard": [[
+        {"text": "❓ Answer screening questions", "callback_data": f"q:{cipher}"[:64]},
+    ]]}
+
+
+def _handle_callback(cq, store):
+    msg = cq.get("message") or {}
+    chat_id = (msg.get("chat") or {}).get("id")
+    mid = msg.get("message_id")
+    if not _authorized(chat_id):
+        answer_callback(cq.get("id", ""))
+        return
+    data = cq.get("data", "") or ""
+
+    if data.startswith("p:"):                       # Generate Proposal
+        answer_callback(cq.get("id", ""), "Generating your proposal…")
+        job = store.get("jobs", {}).get(data[2:])
+        if not job:
+            tg_reply(chat_id, mid, "⚠️ I no longer have this job's details (expired). "
+                                   "Open it on Upwork to apply.")
+            return
+        print(f"[info] proposal requested: {job['title'][:60]!r}")
+        raw = generate_proposal(job)
+        if not raw:
+            tg_reply(chat_id, mid, "⚠️ Couldn't generate a proposal (check GEMINI_API_KEY / "
+                                   "model). Tap the button to retry.")
+            return
+        cover = _extract_cover(raw)
+        if cover:
+            job["proposal"] = cover                 # store so answers can align with it
+        chunks = format_proposal_messages(raw)
+        for i, chunk in enumerate(chunks):
+            last = i == len(chunks) - 1
+            tg_reply(chat_id, mid, chunk,
+                     reply_markup=_proposal_buttons(data[2:]) if last else None)
+            time.sleep(0.4)
+
+    elif data.startswith("q:"):                     # Answer screening questions
+        answer_callback(cq.get("id", ""), "Send me the questions")
+        cipher = data[2:]
+        job = store.get("jobs", {}).get(cipher)
+        title = (job or {}).get("title", "this job")
+        store["awaiting"] = {"cipher": cipher, "ts": time.time()}
+        tg_reply(chat_id, mid,
+                 f"📝 Send the screening questions for “{title[:60]}” — paste them in one "
+                 f"message or several. I'll answer each, aligned with your proposal. "
+                 f"(Auto-clears in {AWAITING_TTL_SEC // 60} min; send /cancel to stop.)")
+    else:
+        answer_callback(cq.get("id", ""))
+
+
+def _handle_message(msg, store):
+    chat_id = (msg.get("chat") or {}).get("id")
+    mid = msg.get("message_id")
+    text = (msg.get("text") or "").strip()
+    if not _authorized(chat_id) or not text:
+        return
+    if time.time() - msg.get("date", 0) > 600:      # ignore stale msgs (e.g. resurfaced on deploy)
+        return
+    if text.lower() in ("/cancel", "/stop", "/done"):
+        store.pop("awaiting", None)
+        tg_reply(chat_id, mid, "✅ Cleared.")
+        return
+
+    aw = store.get("awaiting")
+    if not aw or (time.time() - aw.get("ts", 0)) > AWAITING_TTL_SEC:
+        store.pop("awaiting", None)
+        tg_reply(chat_id, mid,
+                 "To get screening answers: tap 📝 Generate Proposal on a job, then "
+                 "❓ Answer screening questions, then send me the questions.")
+        return
+    job = store.get("jobs", {}).get(aw["cipher"])
+    if not job:
+        store.pop("awaiting", None)
+        tg_reply(chat_id, mid, "⚠️ That job expired from my memory. Generate a fresh proposal first.")
+        return
+    aw["ts"] = time.time()                          # keep armed for follow-up questions
+    print(f"[info] answering questions for: {job['title'][:50]!r}")
+    answers = generate_answers(job, text)
+    if answers:
+        for chunk in _chunk(answers):
+            tg_reply(chat_id, mid, chunk)
+            time.sleep(0.3)
+    else:
+        tg_reply(chat_id, mid, "⚠️ Couldn't generate answers. Send the question again.")
+
+
+def handle_updates(cfg, long_poll=0):
+    """Poll Telegram for button taps and question messages; reply proposals + answers."""
     if not GEMINI_API_KEY:
         return
     store = load_store()
-    params = {"timeout": long_poll, "allowed_updates": json.dumps(["callback_query"])}
+    params = {"timeout": long_poll,
+              "allowed_updates": json.dumps(["callback_query", "message"])}
     if store.get("offset"):
         params["offset"] = store["offset"] + 1
     try:
@@ -723,43 +856,19 @@ def handle_callbacks(cfg, long_poll=0):
         return
     if not updates:
         return
-
-    # Only act on updates newer than what we've already processed (defense in depth on top
-    # of Telegram's own offset), then advance + persist the offset BEFORE the slow
-    # generation so a crash can't make us re-answer the same tap. The button stays on the
-    # message, so re-tapping always works.
+    # Advance + persist the offset BEFORE the slow generation so a crash can't reprocess.
     start_offset = store.get("offset", 0)
     for u in updates:
         store["offset"] = max(store.get("offset", 0), u.get("update_id", 0))
     save_store(store)
-
     for u in updates:
         if u.get("update_id", 0) <= start_offset:
             continue
-        cq = u.get("callback_query")
-        if not cq:
-            continue
-        msg = cq.get("message") or {}
-        chat_id = (msg.get("chat") or {}).get("id")
-        mid = msg.get("message_id")
-        answer_callback(cq.get("id", ""), "Generating your proposal…")
-        data = cq.get("data", "") or ""
-        if not data.startswith("p:"):
-            continue
-        job = store.get("jobs", {}).get(data[2:])
-        if not job:
-            tg_reply(chat_id, mid, "⚠️ I no longer have this job's details (expired). "
-                                   "Open it on Upwork to apply.")
-            continue
-        print(f"[info] proposal requested: {job['title'][:60]!r}")
-        raw = generate_proposal(job)
-        if raw:
-            for chunk in format_proposal_messages(raw):
-                tg_reply(chat_id, mid, chunk)
-                time.sleep(0.4)
-        else:
-            tg_reply(chat_id, mid, "⚠️ Couldn't generate a proposal (check GEMINI_API_KEY / "
-                                   "model). Tap the button to retry.")
+        if u.get("callback_query"):
+            _handle_callback(u["callback_query"], store)
+        elif u.get("message"):
+            _handle_message(u["message"], store)
+    save_store(store)
 
 
 # ---------- one job scan ----------
@@ -858,7 +967,7 @@ def serve(cfg, proxy):
         if remaining <= 0:
             break
         if GEMINI_API_KEY:
-            handle_callbacks(cfg, long_poll=min(25, max(1, int(remaining))))
+            handle_updates(cfg, long_poll=min(25, max(1, int(remaining))))
         else:
             time.sleep(min(15, max(1, int(remaining))))
 
@@ -879,7 +988,7 @@ def main():
         serve(cfg, proxy)
     else:
         run_job_check(cfg, proxy)
-        handle_callbacks(cfg, long_poll=0)  # drain any pending taps once
+        handle_updates(cfg, long_poll=0)  # drain any pending taps/messages once
 
 
 if __name__ == "__main__":

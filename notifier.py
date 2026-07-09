@@ -62,7 +62,8 @@ TOKEN_TTL_SEC = _int_env("TOKEN_TTL_SEC", 1500)  # reuse a cached visitor token 
 # Proposals are ON DEMAND: each job card gets a "Generate Proposal" button; a draft is
 # only written (spending tokens) when you tap it. No key = the button is hidden.
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash").strip()
+# gemini-2.5-flash: best free tier for proposals (Pro models need paid billing).
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash").strip()
 PROFILE_PATH = Path(os.environ.get("PROFILE_PATH", "profile.md"))
 PROMPT_PATH = Path(os.environ.get("PROMPT_PATH", "proposal_prompt.md"))
 
@@ -571,20 +572,26 @@ def generate_proposal(job):
     url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
            f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}")
     body = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": gen_cfg}
-    try:
-        r = requests.post(url, json=body, timeout=60)
-        if r.status_code != 200:
+    for attempt in range(3):
+        try:
+            r = requests.post(url, json=body, timeout=90)
+            if r.status_code == 200:
+                cands = r.json().get("candidates") or []
+                parts = (cands[0].get("content") or {}).get("parts") or [] if cands else []
+                text = "".join(p.get("text", "") for p in parts).strip()
+                return text or None
+            # 503 = model overloaded, 429 = rate (not daily) — worth a short retry.
+            if r.status_code in (503, 429) and attempt < 2:
+                print(f"[warn] gemini {r.status_code}, retrying…", file=sys.stderr)
+                time.sleep(3 * (attempt + 1))
+                continue
             print(f"[warn] gemini HTTP {r.status_code}: {r.text[:200]}", file=sys.stderr)
             return None
-        cands = r.json().get("candidates") or []
-        if not cands:
-            return None
-        parts = (cands[0].get("content") or {}).get("parts") or []
-        text = "".join(p.get("text", "") for p in parts).strip()
-        return text or None
-    except Exception as e:
-        print(f"[warn] gemini error: {e}", file=sys.stderr)
-        return None
+        except Exception as e:  # timeouts, transient network
+            print(f"[warn] gemini error (attempt {attempt+1}): {e}", file=sys.stderr)
+            if attempt < 2:
+                time.sleep(3 * (attempt + 1))
+    return None
 
 
 def _chunk(text, limit=4000):

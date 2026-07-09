@@ -31,14 +31,24 @@ from pathlib import Path
 from curl_cffi import requests
 
 # ---------- config (via env / GitHub secrets) ----------
+def _int_env(name, default):
+    """Parse an int env var, treating unset OR empty-string as the default.
+    (GitHub Actions passes an unset `vars.X` as "" rather than leaving it absent.)"""
+    v = os.environ.get(name, "").strip()
+    try:
+        return int(v) if v else default
+    except ValueError:
+        return default
+
+
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 WEBSHARE_URL = os.environ.get("WEBSHARE_URL", "").strip()  # optional; empty = go direct
-MAX_PAGES = int(os.environ.get("MAX_PAGES", "2"))          # only used if no search_queries
+MAX_PAGES = _int_env("MAX_PAGES", 2)          # only used if no search_queries
 PAGE_SIZE = 50
-JOBS_PER_QUERY = int(os.environ.get("JOBS_PER_QUERY", "50"))  # newest N per search lane
-MAX_NOTIFS = int(os.environ.get("MAX_NOTIFS", "25"))      # cap per run to avoid flood
-SEEN_TTL_DAYS = int(os.environ.get("SEEN_TTL_DAYS", "7"))
+JOBS_PER_QUERY = _int_env("JOBS_PER_QUERY", 50)  # newest N per search lane
+MAX_NOTIFS = _int_env("MAX_NOTIFS", 25)       # cap per run to avoid flood
+SEEN_TTL_DAYS = _int_env("SEEN_TTL_DAYS", 7)
 SEEN_PATH = Path(os.environ.get("SEEN_PATH", "seen.json"))
 FILTERS_PATH = Path(os.environ.get("FILTERS_PATH", "filters.json"))
 

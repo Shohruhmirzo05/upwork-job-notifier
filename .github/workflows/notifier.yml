@@ -2,12 +2,13 @@ name: Upwork Job Notifier
 
 on:
   schedule:
-    # Every 10 min. GitHub throttles scheduled runs under load, so real cadence
-    # is ~10-15 min. You can try "*/5 * * * *" but don't expect exact 5-min.
+    # Heartbeat that (re)starts the loop. Each run loops internally for ~10.5 min
+    # checking every ~90s, so runs chain back-to-back for continuous ~1-2 min coverage.
     - cron: "*/10 * * * *"
   workflow_dispatch: {}   # lets you run it manually from the Actions tab
 
-# Prevent overlapping runs from racing on the dedup cache
+# One run at a time; the next queued run starts as soon as the current finishes
+# (its dedup cache is saved on exit) -> gap-free chaining, no cache races.
 concurrency:
   group: upwork-notifier
   cancel-in-progress: false
@@ -19,13 +20,14 @@ permissions:
 jobs:
   notify:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip   # cache curl_cffi wheel -> faster runs, fewer Actions minutes
+          cache: pip   # cache curl_cffi wheel -> faster runs
 
       - name: Install deps
         run: pip install -r requirements.txt
@@ -40,7 +42,7 @@ jobs:
           restore-keys: |
             upwork-seen-
 
-      - name: Run notifier
+      - name: Run notifier (fast loop)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -52,10 +54,26 @@ jobs:
           # KEYWORDS/EXCLUDE_KEYWORDS are only a fallback if filters.json is missing.
           KEYWORDS: ${{ vars.KEYWORDS }}
           EXCLUDE_KEYWORDS: ${{ vars.EXCLUDE_KEYWORDS }}
-        run: python notifier.py
+          # loop knobs (seconds); override via repo Variables if you like
+          LOOP_SECONDS: ${{ vars.LOOP_SECONDS }}
+          CHECK_INTERVAL: ${{ vars.CHECK_INTERVAL }}
+        run: |
+          LOOP_SECONDS="${LOOP_SECONDS:-630}"      # ~10.5 min of checking, then exit cleanly
+          CHECK_INTERVAL="${CHECK_INTERVAL:-90}"   # ~90s between checks
+          i=0
+          while [ "$SECONDS" -lt "$LOOP_SECONDS" ]; do
+            i=$((i + 1))
+            echo "::group::check #$i (t=${SECONDS}s)"
+            python notifier.py || echo "check #$i failed, continuing"
+            echo "::endgroup::"
+            [ "$SECONDS" -lt "$LOOP_SECONDS" ] && sleep "$CHECK_INTERVAL"
+          done
+          echo "loop finished after $i checks (${SECONDS}s)"
 
-      # Save the updated seen.json under a unique key (old caches auto-expire in 7 days).
+      # Save the updated seen.json so the next run dedupes against it.
+      # always() -> persists even if the last check in the loop errored.
       - name: Save dedup state
+        if: always()
         uses: actions/cache/save@v4
         with:
           path: seen.json

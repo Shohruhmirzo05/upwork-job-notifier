@@ -64,8 +64,10 @@ TOKEN_TTL_SEC = _int_env("TOKEN_TTL_SEC", 1500)  # reuse a cached visitor token 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 # Ordered fallback chain (comma-separated). Free-tier daily quota is PER MODEL, so if the
 # best model is rate-limited we fall through to one that still has quota. Pro needs billing.
+# Only the top-quality free model; when its daily quota is gone we go to paid OpenAI,
+# not to weaker free models. (Comma-separate here to add more top models later.)
 GEMINI_MODELS = [m.strip() for m in os.environ.get(
-    "GEMINI_MODEL", "gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash"
+    "GEMINI_MODEL", "gemini-2.5-flash"
 ).split(",") if m.strip()]
 # Paid OpenAI fallback, used ONLY when free Gemini is exhausted/unavailable.
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()

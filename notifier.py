@@ -516,26 +516,38 @@ def main():
 
     fresh = [j for j in hits if j["cipher"] not in seen]
 
-    # Freshness guard: never notify jobs older than MAX_AGE_HOURS (unknown age = keep).
+    # Freshness guard: jobs older than MAX_AGE_HOURS are "handled" (marked seen below) but
+    # never notified. Unknown age is treated as recent (kept).
     if MAX_AGE_HOURS > 0:
-        n_before = len(fresh)
-        fresh = [j for j in fresh
-                 if (age_hours(j["publish"]) is None) or (age_hours(j["publish"]) <= MAX_AGE_HOURS)]
-        dropped = n_before - len(fresh)
-        if dropped:
-            print(f"[info] dropped {dropped} jobs older than {MAX_AGE_HOURS}h")
+        recent = []
+        n_old = 0
+        for j in fresh:
+            a = age_hours(j["publish"])
+            if a is not None and a > MAX_AGE_HOURS:
+                n_old += 1
+            else:
+                recent.append(j)
+        if n_old:
+            print(f"[info] {n_old} matching jobs older than {MAX_AGE_HOURS}h (skipped)")
+        fresh = recent
 
     fresh.sort(key=lambda j: -j["score"])  # best score first
-    print(f"[info] {len(fresh)} new to notify")
+    to_send = fresh[:MAX_NOTIFS]
+    # Cap overflow is NOT marked seen -> it gets sent on the next check instead of being lost.
+    overflow = {j["cipher"] for j in fresh[MAX_NOTIFS:]}
+    if overflow:
+        print(f"[info] {len(overflow)} over MAX_NOTIFS cap; will send next check")
+    print(f"[info] {len(to_send)} new to notify")
 
-    for j in fresh[:MAX_NOTIFS]:
+    for j in to_send:
         send(j, cfg)
         time.sleep(0.6)  # gentle on Telegram rate limits
 
-    # mark everything we saw as seen (not just notified) so filters can change later
+    # Mark seen: everything we fetched EXCEPT the cap-overflow hits (so none are lost).
     for j in jobs:
-        if j["cipher"]:
-            seen[j["cipher"]] = now
+        c = j["cipher"]
+        if c and c not in overflow:
+            seen[c] = now
     save_seen(seen)
     print("[info] done")
 

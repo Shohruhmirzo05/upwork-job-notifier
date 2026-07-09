@@ -2,9 +2,10 @@ name: Upwork Job Notifier
 
 on:
   schedule:
-    # Heartbeat that (re)starts the loop. Each run loops internally for ~10.5 min
-    # checking every ~90s, so runs chain back-to-back for continuous ~1-2 min coverage.
-    - cron: "*/10 * * * *"
+    # Restart heartbeat. GitHub DROPS scheduled runs under load, so we fire every 5 min
+    # AND make each run last ~17 min — that's ~3 restart chances per run, so a dropped
+    # cron tick can't open a coverage gap. Runs chain back-to-back (concurrency below).
+    - cron: "*/5 * * * *"
   workflow_dispatch: {}   # lets you run it manually from the Actions tab
 
 # One run at a time; the next queued run starts as soon as the current finishes
@@ -20,7 +21,7 @@ permissions:
 jobs:
   notify:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 20   # loop runs ~17 min, leaving margin for setup + cache save
     steps:
       - uses: actions/checkout@v4
 
@@ -58,7 +59,7 @@ jobs:
           LOOP_SECONDS: ${{ vars.LOOP_SECONDS }}
           CHECK_INTERVAL: ${{ vars.CHECK_INTERVAL }}
         run: |
-          LOOP_SECONDS="${LOOP_SECONDS:-630}"      # ~10.5 min of checking, then exit cleanly
+          LOOP_SECONDS="${LOOP_SECONDS:-1020}"     # ~17 min of checking, then exit cleanly
           CHECK_INTERVAL="${CHECK_INTERVAL:-90}"   # ~90s between checks
           i=0
           while [ "$SECONDS" -lt "$LOOP_SECONDS" ]; do

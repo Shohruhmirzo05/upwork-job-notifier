@@ -28,6 +28,8 @@ jobs:
       HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}   # dead-man's-switch (optional)
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}     # free Gemini key for proposals (optional)
       GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}     # paid fallback when Gemini is exhausted
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
       MAX_PAGES: ${{ vars.MAX_PAGES }}
       MAX_NOTIFS: ${{ vars.MAX_NOTIFS }}
       MAX_AGE_HOURS: ${{ vars.MAX_AGE_HOURS }}

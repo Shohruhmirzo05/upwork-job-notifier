@@ -67,6 +67,10 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 GEMINI_MODELS = [m.strip() for m in os.environ.get(
     "GEMINI_MODEL", "gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash"
 ).split(",") if m.strip()]
+# Paid OpenAI fallback, used ONLY when free Gemini is exhausted/unavailable.
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.6-luna").strip()
+AI_ENABLED = bool(GEMINI_API_KEY or OPENAI_API_KEY)
 PROFILE_PATH = Path(os.environ.get("PROFILE_PATH", "profile.md"))
 PROMPT_PATH = Path(os.environ.get("PROMPT_PATH", "proposal_prompt.md"))
 
@@ -467,7 +471,7 @@ def send(job, cfg):
     row = []
     if job.get("link"):
         row.append({"text": "🔗 Open on Upwork", "url": job["link"]})
-    if GEMINI_API_KEY and job.get("cipher"):
+    if AI_ENABLED and job.get("cipher"):
         row.append({"text": "📝 Generate Proposal", "callback_data": f"p:{job['cipher']}"[:64]})
     if row:
         payload["reply_markup"] = {"inline_keyboard": [row]}
@@ -613,12 +617,47 @@ def _gemini_generate(prompt, json_mode=False, max_tokens=8192):
     return None
 
 
+def _openai_generate(prompt, json_mode=False, max_tokens=8192):
+    """Paid OpenAI (GPT-5.6) generation — used only as a fallback when Gemini is unavailable."""
+    if not OPENAI_API_KEY:
+        return None
+    body = {"model": OPENAI_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_completion_tokens": max_tokens}
+    if json_mode:
+        body["response_format"] = {"type": "json_object"}
+    try:
+        r = requests.post("https://api.openai.com/v1/chat/completions",
+                          headers={"Authorization": f"Bearer {OPENAI_API_KEY}",
+                                   "Content-Type": "application/json"},
+                          json=body, timeout=90)
+        if r.status_code == 200:
+            choices = r.json().get("choices") or [{}]
+            return (choices[0].get("message", {}).get("content") or "").strip() or None
+        print(f"[warn] openai HTTP {r.status_code}: {r.text[:200]}", file=sys.stderr)
+        return None
+    except Exception as e:
+        print(f"[warn] openai error: {e}", file=sys.stderr)
+        return None
+
+
+def _generate(prompt, json_mode=False, max_tokens=8192):
+    """Free Gemini first; fall back to paid OpenAI only if Gemini is unavailable/exhausted."""
+    text = _gemini_generate(prompt, json_mode=json_mode, max_tokens=max_tokens)
+    if text:
+        return text
+    if OPENAI_API_KEY:
+        print("[info] Gemini unavailable — falling back to OpenAI", file=sys.stderr)
+        return _openai_generate(prompt, json_mode=json_mode, max_tokens=max_tokens)
+    return None
+
+
 def generate_proposal(job):
     """Draft a proposal with the proposal-brain prompt. Returns raw model text or None."""
     template = load_prompt_template()
     use_json = bool(template)
     prompt = _fill_prompt(job, template) if template else _fallback_prompt(job)
-    return _gemini_generate(prompt, json_mode=use_json)
+    return _generate(prompt, json_mode=use_json)
 
 
 def generate_answers(job, questions):
@@ -641,7 +680,7 @@ def generate_answers(job, questions):
         "links, rate, claims), hyphen bullets if listing, no asterisks, no emojis, no fabrication, "
         "paste-ready with no preamble.\n"
     )
-    raw = _gemini_generate(prompt, json_mode=True, max_tokens=4096)
+    raw = _generate(prompt, json_mode=True, max_tokens=4096)
     if not raw:
         return None
     try:
@@ -875,7 +914,7 @@ def _handle_message(msg, store):
 
 def handle_updates(cfg, long_poll=0):
     """Poll Telegram for button taps and question messages; reply proposals + answers."""
-    if not GEMINI_API_KEY:
+    if not AI_ENABLED:
         return
     store = load_store()
     params = {"timeout": long_poll,
@@ -988,7 +1027,7 @@ def serve(cfg, proxy):
     end = time.time() + SERVE_SECONDS
     last_check = 0.0
     print(f"[info] serve mode for {SERVE_SECONDS}s (job scan every {JOB_INTERVAL}s; "
-          f"proposal button {'ON' if GEMINI_API_KEY else 'off'})")
+          f"proposal button {'ON' if AI_ENABLED else 'off'})")
     while True:
         if time.time() >= end:
             break
@@ -1001,7 +1040,7 @@ def serve(cfg, proxy):
         remaining = end - time.time()
         if remaining <= 0:
             break
-        if GEMINI_API_KEY:
+        if AI_ENABLED:
             handle_updates(cfg, long_poll=min(25, max(1, int(remaining))))
         else:
             time.sleep(min(15, max(1, int(remaining))))

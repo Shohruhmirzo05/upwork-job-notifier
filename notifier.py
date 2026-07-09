@@ -540,8 +540,8 @@ def _fill_prompt(job, template):
         "{{CLIENT_INFO}}": "(not provided by the job feed)",
         "{{SCORE_AND_MATCHES}}": f"internal score {score}; matched keywords: {matched}"
                                  if matched else f"internal score {score}",
-        "{{QUESTIONS}}": "(screening questions are not available from the job feed; "
-                         "provide answers only if the description implies them)",
+        "{{QUESTIONS}}": "(not provided by the feed — pre-answer the common Upwork "
+                         "screening questions as instructed in OUTPUT FORMAT)",
     }
     out = template
     for k, v in subs.items():
@@ -638,30 +638,16 @@ def format_proposal_messages(raw):
         # JSON was malformed/truncated — salvage the cover letter so we NEVER dump raw JSON.
         letter = _salvage_field(raw, "cover_letter")
         if letter:
-            head = []
-            t = _salvage_field(raw, "recommended_title")
-            r = _salvage_field(raw, "recommended_rate_or_price")
-            if t:
-                head.append(f"📌 {t}")
-            if r:
-                head.append(f"💵 {r}")
-            body = ("\n".join(head) + "\n\n" + letter).strip() if head else letter
-            return _chunk(body)
+            return _chunk(letter)
         return _chunk("⚠️ The model returned an unreadable response. Tap the button to retry.")
 
-    msgs = []
-    head = []
-    if data.get("recommended_title"):
-        head.append(f"📌 {data['recommended_title']}")
-    if data.get("recommended_rate_or_price"):
-        head.append(f"💵 {data['recommended_rate_or_price']}")
-    cover = (data.get("cover_letter") or "").strip()
-    first = ("\n".join(head) + "\n\n" + cover).strip() if head else cover
-    msgs += _chunk(first or "(empty proposal — tap to retry)")
+    # Message 1: the cover letter only — paste-ready, no header noise.
+    msgs = _chunk((data.get("cover_letter") or "").strip() or "(empty proposal — tap to retry)")
 
+    # Message 2: ready answers to the common Upwork screening questions.
     sa = data.get("screening_answers") or []
     if sa:
-        lines = ["— Screening answers —"]
+        lines = ["📋 Common screening answers (copy the ones the job asks):"]
         for qa in sa:
             q = (qa.get("question") or "").strip()
             a = (qa.get("answer") or "").strip()
@@ -670,14 +656,6 @@ def format_proposal_messages(raw):
             if a:
                 lines.append(a)
         msgs += _chunk("\n".join(lines))
-
-    notes = [f"• {w}" for w in (data.get("why_this_matches") or [])]
-    notes += [f"⚠️ {r}" for r in (data.get("risk_notes") or [])]
-    atts = data.get("attachments_to_include") or []
-    if atts:
-        notes += [f"📎 {a}" for a in atts]
-    if notes:
-        msgs += _chunk("🔎 Notes (for you, not the client):\n" + "\n".join(notes))
     return msgs
 
 

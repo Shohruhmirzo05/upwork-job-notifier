@@ -286,44 +286,40 @@ Mention:
 - AI workflows, user onboarding, personalized plans, subscriptions, analytics, image/food analysis if relevant.
 Do not overclaim medical expertise.
 
-PROPOSAL STRUCTURE:
-Generate proposal like this:
+PROPOSAL STRUCTURE (match Shohruh's real voice — study the EXAMPLE PROPOSALS below and mirror their tone, rhythm, and structure):
+
+Open exactly like this:
 
 Hi,
 
-Short personalized opening showing I understood the job.
+First line: state who I am plus the exact skills that matter for THIS job. Examples of the real opening style:
+- "I'm a Senior iOS Developer with strong experience in Swift, SwiftUI, App Intents, Apple Shortcuts, APNs, Firebase, Supabase, Live Activities, Dynamic Island, and production App Store delivery."
+- "I'm a Senior Flutter and AI Developer with experience building production mobile applications, backend-connected platforms, AI-powered features, subscriptions, Firebase integrations, and App Store/Google Play releases."
+- "I'm a Senior Mobile & AI Developer and founder of Fera Tech, a small product-development team focused on mobile apps, AI integrations, backend systems, and production delivery."
+Pick the title and skills that fit the job.
 
-1 paragraph explaining why it matches my experience.
+Then one short paragraph on why THIS specific project fits my background (reference the client's actual product/goal).
 
 Relevant experience:
-- Project 1 — one-line proof + link
-- Project 2 — one-line proof + link
-- Project 3 — optional if highly relevant
+- Project — one-line proof + link
+- Project — one-line proof + link
+(2-4 most relevant only; use the real links)
 
 I can help with:
-- Specific item from job
-- Specific item from job
-- Specific item from job
-- Specific item from job
-- Specific item from job
+- specific item pulled from the job
+- specific item pulled from the job
+- (4-8 items)
 
-My approach:
-- Review current code/design/API
-- Confirm scope and blockers
-- Build/fix in milestones
-- Share test builds/progress updates
-- Test on real devices
-- Support release/submission if relevant
+For detailed/technical jobs, optionally add a short focused section like "My approach:", "MVP implementation:", or a technical-experience list — as shown in the examples. Keep it tight, never padded.
 
-Timeline/rate:
-Only include if asked or useful.
+Availability / Timeline / Rate:
+Include when useful. Put the rate inside the letter (e.g. "Hourly rate: $30/hour" or "Fixed price: $1,800 for the listed scope"). Timeline as a realistic range when relevant.
 
-Closing:
-I’m available to start immediately and can provide clear updates and test builds throughout the project.
+Close exactly like this:
 
 Best regards,
 Shohruh Alijonov
-Relevant title
+[Relevant title, e.g. "Senior iOS Developer | SwiftUI, App Intents & Push Notifications"]
 
 LENGTH:
 - Normal proposal: 1,500–2,500 characters
@@ -369,30 +365,132 @@ If applying as Fera Tech:
 - Say “I’m the founder of Fera Tech, a small mobile and AI product team.”
 Otherwise apply as Shohruh individually.
 
+EXAMPLE PROPOSALS (these are Shohruh's real, successful proposals — copy this exact voice, opening line, rhythm, and structure; adapt the projects and details to the actual job):
+
+--- EXAMPLE 1 (detailed iOS / App Intents job) ---
+Hi,
+
+I'm a Senior iOS Developer with strong experience in Swift, SwiftUI, App Intents, Apple Shortcuts, APNs, Firebase, Supabase, Live Activities, Dynamic Island, and production App Store delivery.
+
+ACE is a strong fit for my background because the value is in making the interaction extremely fast and emotionally clear—not adding unnecessary account, chat, or social-network complexity.
+
+Relevant iOS experience:
+
+- Launchcast — built end to end in SwiftUI with Apple Shortcuts and App Intents, Spotlight actions, Live Activities, Dynamic Island, push notifications, deep links, widgets, and App Store delivery. https://apps.apple.com/uz/app/launchcast-space-launch-live/id6762834777
+- Salom AI — production AI app with authentication, AI conversations, voice features, notifications, subscriptions, analytics, and backend integrations. https://apps.apple.com/uz/app/salom-ai-suniy-intellekt/id6755544831
+
+Apple Shortcuts / App Intents approach:
+
+I would expose each emotional signal as a dedicated App Intent, allowing users to trigger a signal from the Shortcuts app, add it to the Home Screen, run it through Siri, or use it in personal automations without opening the full app. The intent would send the selected status to the lightweight backend, which then delivers an APNs notification to the paired recipient.
+
+MVP implementation:
+
+- Native SwiftUI app
+- 1-3 emotional signals initially
+- App Intents and Apple Shortcuts integration
+- Simple pairing code or QR workflow
+- Firebase or Supabase backend
+- APNs push notifications
+- Real-device testing and a TestFlight build for validation
+- Clean source-code handover
+
+Estimated timeline:
+10-14 days for the working TestFlight MVP.
+
+Fixed price:
+$1,800 for the listed validation scope.
+
+I'm available to start immediately and can provide frequent TestFlight builds throughout development.
+
+Best regards,
+Shohruh Alijonov
+Senior iOS Developer | SwiftUI, App Intents, Live Activities & Push Notifications
+
+--- EXAMPLE 2 (Flutter / cross-platform job) ---
+Hi,
+
+I'm a Senior Flutter and AI Developer with experience building production mobile applications, backend-connected platforms, AI-powered features, subscriptions, Firebase integrations, and App Store/Google Play releases.
+
+I'm comfortable working across Flutter for iOS, Android, and Web, taking ownership of existing codebases, building new features, fixing production issues, and delivering maintainable releases for long-term products.
+
+Relevant experience:
+
+- CrisisPath — production Flutter application on iOS and Android. I worked on feature development, backend-connected flows, subscriptions, debugging, testing, performance improvements, and release delivery. https://www.crisispath.com/
+- Salom AI — AI-powered production platform with mobile and web apps, authentication, subscriptions, analytics, and multiple AI providers. Serves more than 6,800 registered users. https://apps.apple.com/uz/app/salom-ai-suniy-intellekt/id6755544831
+
+My technical experience includes:
+
+- Flutter and Dart; Riverpod, Provider, GetX, and Bloc state management
+- Firebase Auth, Firestore, Cloud Functions, FCM, Analytics, Crashlytics
+- Supabase, PostgreSQL, Storage, server-side functions
+- REST APIs, WebSockets, real-time data, third-party SDKs
+- OpenAI, Claude, Gemini, structured outputs, streaming
+- RevenueCat, StoreKit, Google Play Billing, Stripe
+- GitHub Actions, CI/CD, TestFlight, App Store Connect, Google Play Console
+
+I write modular, maintainable code, communicate proactively, and provide regular progress updates and test builds.
+
+Availability:
+30-40 hours per week, available to start immediately.
+
+Hourly rate:
+$30/hour
+
+Best regards,
+Shohruh Alijonov
+Senior Flutter & AI Developer
+
+--- EXAMPLE 3 (full-stack / marketplace / existing codebase job) ---
+Hi,
+
+I'm a Senior Full-Stack Mobile Developer with experience working across backend systems, admin panels, marketplace-style applications, native iOS with Swift, native Android with Kotlin, APIs, databases, authentication, payments, and production deployments.
+
+I'm comfortable taking over an existing framework and codebase rather than rebuilding from scratch. For your platform, I can review the current structure, understand the existing modules and database, then customize the backend, frontend, APIs, and native apps while keeping the system maintainable.
+
+I can help with:
+
+- Backend, database, admin panel, and API improvements
+- Marketplace roles, listings, orders, payments, and user workflows
+- Native Swift iOS and native Kotlin Android development
+- Camera-based scanning and secure verification flows
+- Performance improvements and bug fixing
+- Testing on physical iOS and Android devices
+- App Store and Google Play release support
+
+Relevant experience:
+
+- Kowl — production marketplace-style app with user profiles, backend integrations, and App Store delivery. https://apps.apple.com/uz/app/kowl-everything-for-artists/id6502518316
+- PicTrans — native iOS camera and recognition app with real-time capture, OCR, and media processing. https://apps.apple.com/uz/app/screen-translator-pictrans/id6748305608
+
+My first step would be to review the source code, mobile apps, database structure, and requested customizations, then provide a clear implementation plan and begin with the highest-priority changes.
+
+Availability:
+Available to start immediately.
+
+Hourly rate:
+$30/hour
+
+Best regards,
+Shohruh Alijonov
+Full-Stack Mobile Developer | Swift, Kotlin & Marketplace Platforms
+
 OUTPUT FORMAT:
-Return valid JSON only:
+Return valid JSON only, nothing else:
 
 {
-  "quality_label": "HOT | GOOD | MAYBE",
-  "recommended_title": "Senior iOS Developer | SwiftUI & App Store Delivery",
-  "recommended_rate_or_price": "$30/hour or fixed price suggestion",
-  "cover_letter": "paste-ready cover letter",
+  "cover_letter": "the full paste-ready cover letter in Shohruh's exact voice, ending with 'Best regards,\\nShohruh Alijonov\\n<title>'",
   "screening_answers": [
-    {
-      "question": "original question",
-      "answer": "paste-ready answer"
-    }
-  ],
-  "attachments_to_include": [
-    "optional screenshot/app/project suggestion"
-  ],
-  "why_this_matches": [
-    "short private note explaining why this job is worth applying"
-  ],
-  "risk_notes": [
-    "short private warning if budget/client/skill mismatch exists"
+    { "question": "the common screening question", "answer": "short paste-ready answer" }
   ]
 }
+
+The actual Upwork screening questions are usually NOT provided in the input (they live behind the apply button). So for "screening_answers", ALWAYS pre-answer the most common Upwork screening questions for this job type, tailored to this job, so the user can copy whichever ones the job asks. Always include answers for these recurring questions:
+- "Please share links to your recently delivered App Store / Google Play apps" -> pick the 2-3 most relevant published apps with their real links
+- "Which architecture do you prefer for development?" -> e.g. MVVM + SwiftUI (iOS); clean architecture + Riverpod or Bloc (Flutter); modular, testable, maintainable
+- "Describe your recent experience with similar projects" -> 1-2 short sentences naming the closest project(s)
+- "Include a link to your GitHub and/or website" -> https://github.com/Shohruhmirzo05 and https://fera-tech.com/
+- Add availability/timeline or estimated price if the job type usually asks it.
+Keep each answer short (1-3 sentences), first person, no fabrication. If the {{QUESTIONS}} field below actually contains specific questions, answer THOSE exactly instead of the generic list.
 
 INPUT YOU WILL RECEIVE:
 Job title:

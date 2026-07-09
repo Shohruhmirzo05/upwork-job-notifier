@@ -1,9 +1,9 @@
 # local secrets — never commit
 .env
 
+# dedup state — lives in GitHub Actions cache, not the repo (keeps history clean)
+seen.json
+
 # python
 __pycache__/
 *.pyc
-
-# NOTE: seen.json is intentionally NOT ignored — the workflow commits it back
-# each run so dedup state survives between ephemeral GitHub Actions runners.

@@ -11,7 +11,8 @@ Every ~10 min, a GitHub Actions cron:
    and **merges + dedupes** the results by job id. This gives deep coverage of your niche
    instead of a thin slice of the newest *global* jobs.
 3. **Scores** each job with a local weighted-keyword engine (`filters.json`).
-4. Dedupes against `seen.json` (committed back to the repo each run).
+4. Dedupes against `seen.json`, which persists in the **GitHub Actions cache** (no repo
+   commits — history stays clean; if the cache is ever lost it just re-seeds silently).
 5. Sends each new job scoring ≥ `min_score` to Telegram — tagged **🔥 HOT / 🟢 GOOD / 🟡 MAYBE**,
    best score first, showing which keywords hit and how long ago it was posted.
 

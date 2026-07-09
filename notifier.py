@@ -52,6 +52,8 @@ MAX_AGE_HOURS = _int_env("MAX_AGE_HOURS", 24)  # never notify jobs older than th
 SEEN_TTL_DAYS = _int_env("SEEN_TTL_DAYS", 7)
 SEEN_PATH = Path(os.environ.get("SEEN_PATH", "seen.json"))
 FILTERS_PATH = Path(os.environ.get("FILTERS_PATH", "filters.json"))
+TOKEN_PATH = Path(os.environ.get("TOKEN_PATH", ".token.json"))
+TOKEN_TTL_SEC = _int_env("TOKEN_TTL_SEC", 1500)  # reuse a cached visitor token ~25 min
 
 UPWORK_HOME = "https://www.upwork.com/"
 GRAPHQL_URL = "https://www.upwork.com/api/graphql/v1"
@@ -224,9 +226,32 @@ def get_proxy_dict():
 IMPERSONATE = ["chrome", "chrome131", "chrome124", "chrome120", "safari17_0"]
 
 
-def get_token(proxy, tries=5):
-    """Fetch a visitor GraphQL token, retrying with backoff + rotating fingerprints.
-    Rides out transient 403s / rate-limits from Cloudflare."""
+def _read_cached_token():
+    """Return a still-fresh cached token, or None. Persisting the token across loop
+    iterations means we hit the 403-prone homepage ~once per run, not once per check."""
+    try:
+        d = json.loads(TOKEN_PATH.read_text())
+        if d.get("token") and (time.time() - d.get("ts", 0)) < TOKEN_TTL_SEC:
+            return d["token"]
+    except Exception:
+        pass
+    return None
+
+
+def _write_cached_token(token):
+    try:
+        TOKEN_PATH.write_text(json.dumps({"token": token, "ts": time.time()}))
+    except Exception:
+        pass
+
+
+def get_token(proxy, tries=5, force=False):
+    """Return a visitor GraphQL token — from disk cache if fresh, else fetched from
+    upwork.com with backoff + rotating TLS fingerprints to ride out Cloudflare 403s."""
+    if not force:
+        cached = _read_cached_token()
+        if cached:
+            return cached
     last = None
     for i in range(tries):
         imp = IMPERSONATE[i % len(IMPERSONATE)]
@@ -235,6 +260,7 @@ def get_token(proxy, tries=5):
             if resp.status_code == 200:
                 token = resp.cookies.get(TOKEN_COOKIE)
                 if token:
+                    _write_cached_token(token)
                     return token
                 last = RuntimeError(f"200 but no {TOKEN_COOKIE} cookie "
                                     f"({list(resp.cookies.keys())})")
@@ -459,6 +485,11 @@ def main():
     token = get_token(proxy)
 
     jobs = fetch_all_jobs(token, proxy, cfg)
+    if not jobs:
+        # Likely a stale cached token (401) — force a fresh one and retry once.
+        print("[warn] no jobs on first pass; refreshing token and retrying", file=sys.stderr)
+        token = get_token(proxy, force=True)
+        jobs = fetch_all_jobs(token, proxy, cfg)
     print(f"[info] fetched {len(jobs)} unique jobs across lanes")
 
     hits = []

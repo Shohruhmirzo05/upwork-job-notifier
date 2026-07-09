@@ -4,6 +4,9 @@
 # dedup state — lives in GitHub Actions cache, not the repo (keeps history clean)
 seen.json
 
+# cached visitor token (runtime only)
+.token.json
+
 # python
 __pycache__/
 *.pyc

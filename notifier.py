@@ -62,8 +62,11 @@ TOKEN_TTL_SEC = _int_env("TOKEN_TTL_SEC", 1500)  # reuse a cached visitor token 
 # Proposals are ON DEMAND: each job card gets a "Generate Proposal" button; a draft is
 # only written (spending tokens) when you tap it. No key = the button is hidden.
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
-# gemini-2.5-flash: best free tier for proposals (Pro models need paid billing).
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash").strip()
+# Ordered fallback chain (comma-separated). Free-tier daily quota is PER MODEL, so if the
+# best model is rate-limited we fall through to one that still has quota. Pro needs billing.
+GEMINI_MODELS = [m.strip() for m in os.environ.get(
+    "GEMINI_MODEL", "gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash"
+).split(",") if m.strip()]
 PROFILE_PATH = Path(os.environ.get("PROFILE_PATH", "profile.md"))
 PROMPT_PATH = Path(os.environ.get("PROMPT_PATH", "proposal_prompt.md"))
 
@@ -567,36 +570,46 @@ def _fallback_prompt(job):
 
 
 def _gemini_generate(prompt, json_mode=False, max_tokens=8192):
-    """One Gemini call with retries. thinking disabled so long outputs don't get truncated.
-    Key goes in a header (not the URL) so it can't leak via URL logging."""
+    """One Gemini generation, walking the model fallback chain: on 429 (daily quota) move to
+    the next model; on 503 (overload) retry once then move on. thinking disabled so long
+    outputs don't truncate. Key goes in a header (not the URL) so it can't leak via logs."""
     if not GEMINI_API_KEY:
         return None
     gen_cfg = {"temperature": 0.6, "maxOutputTokens": max_tokens,
                "thinkingConfig": {"thinkingBudget": 0}}
     if json_mode:
         gen_cfg["responseMimeType"] = "application/json"
-    url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
-           f"{GEMINI_MODEL}:generateContent")
     headers = {"x-goog-api-key": GEMINI_API_KEY}
     body = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": gen_cfg}
-    for attempt in range(3):
-        try:
-            r = requests.post(url, json=body, headers=headers, timeout=90)
-            if r.status_code == 200:
-                cands = r.json().get("candidates") or []
-                parts = (cands[0].get("content") or {}).get("parts") or [] if cands else []
-                text = "".join(p.get("text", "") for p in parts).strip()
-                return text or None
-            if r.status_code in (503, 429) and attempt < 2:  # overloaded / transient rate
-                print(f"[warn] gemini {r.status_code}, retrying…", file=sys.stderr)
-                time.sleep(3 * (attempt + 1))
-                continue
-            print(f"[warn] gemini HTTP {r.status_code}: {r.text[:200]}", file=sys.stderr)
-            return None
-        except Exception as e:  # timeouts, transient network
-            print(f"[warn] gemini error (attempt {attempt+1}): {e}", file=sys.stderr)
-            if attempt < 2:
-                time.sleep(3 * (attempt + 1))
+    for model in GEMINI_MODELS:
+        url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+               f"{model}:generateContent")
+        for attempt in range(2):
+            try:
+                r = requests.post(url, json=body, headers=headers, timeout=90)
+                if r.status_code == 200:
+                    cands = r.json().get("candidates") or []
+                    parts = (cands[0].get("content") or {}).get("parts") or [] if cands else []
+                    text = "".join(p.get("text", "") for p in parts).strip()
+                    if text:
+                        return text
+                    break  # empty -> try next model
+                if r.status_code == 429:  # daily quota for this model -> next model, no retry
+                    print(f"[warn] gemini {model}: quota exhausted (429); trying next model",
+                          file=sys.stderr)
+                    break
+                if r.status_code == 503 and attempt == 0:  # overloaded -> one quick retry
+                    time.sleep(2)
+                    continue
+                print(f"[warn] gemini {model} HTTP {r.status_code}: {r.text[:150]}",
+                      file=sys.stderr)
+                break
+            except Exception as e:  # timeouts, transient network
+                print(f"[warn] gemini {model} error: {e}", file=sys.stderr)
+                if attempt == 0:
+                    time.sleep(2)
+                    continue
+                break
     return None
 
 

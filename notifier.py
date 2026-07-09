@@ -288,11 +288,19 @@ def fmt_budget(job):
     if job["job_type"] == "HOURLY":
         lo, hi = job["hourly_min"], job["hourly_max"]
         if lo or hi:
-            return f"${int(float(lo or 0))}-${int(float(hi or 0))}/hr"
+            return f"${int(float(lo or 0))}–{int(float(hi or 0))}/hr"
         return "Hourly"
     if job["fixed"]:
         return f"${int(float(job['fixed']))} fixed"
     return job["job_type"].title() or "—"
+
+
+def clean_tier(t):
+    """Upwork returns e.g. 'IntermediateLevel' -> 'Intermediate'."""
+    if not t:
+        return ""
+    t = re.sub(r"level", "", t, flags=re.IGNORECASE).strip()
+    return t.title()
 
 
 def fmt_age(publish):
@@ -323,26 +331,27 @@ def esc(t):
 
 
 def build_message(job, cfg):
+    """Compact, glanceable card — 4 short lines, no description wall."""
     label, emoji = tier_for(job["score"], cfg)
     age = fmt_age(job.get("publish", ""))
-    age_part = f" · 🕒 {age}" if age else ""
-    ctier = f" · {esc(job['tier'].title())}" if job["tier"] else ""
-    matched = ", ".join(job.get("matched", [])[:7])
-    skills = ", ".join(job["skills"][:6])
-    desc = job["description"][:300].strip()
+    ctier = clean_tier(job["tier"])
+    matched = ", ".join(job.get("matched", [])[:4])
+
+    head = f"{emoji} <b>{label} · {job['score']}</b>"
+    if age:
+        head += f" · {age}"
+    budget = f"💰 {esc(fmt_budget(job))}"
+    if ctier:
+        budget += f" · {esc(ctier)}"
 
     lines = [
-        f"{emoji} <b>{label}</b> · score {job['score']}{age_part}",
-        f"<b>{esc(job['title'][:140])}</b>",
-        f"💰 {esc(fmt_budget(job))}{ctier}",
+        head,
+        f"<b>{esc(job['title'][:100])}</b>",
+        budget,
     ]
     if matched:
         lines.append(f"🎯 {esc(matched)}")
-    if skills:
-        lines.append(f"🏷 {esc(skills)}")
-    if desc:
-        lines += ["", f"{esc(desc)}…"]
-    lines += ["", f'<a href="{job["link"]}">Open on Upwork ↗</a>']
+    lines.append(f'<a href="{job["link"]}">Open ↗</a>')
     return "\n".join(lines)
 
 

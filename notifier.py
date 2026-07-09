@@ -566,7 +566,10 @@ def generate_proposal(job):
     template = load_prompt_template()
     use_json = bool(template)
     prompt = _fill_prompt(job, template) if template else _fallback_prompt(job)
-    gen_cfg = {"temperature": 0.6, "maxOutputTokens": 3072}
+    # High token budget + thinking disabled so the JSON can't get truncated mid-proposal
+    # (2.5-flash "thinking" otherwise eats the budget). thinkingConfig is safe to send.
+    gen_cfg = {"temperature": 0.6, "maxOutputTokens": 8192,
+               "thinkingConfig": {"thinkingBudget": 0}}
     if use_json:
         gen_cfg["responseMimeType"] = "application/json"
     url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
@@ -605,6 +608,18 @@ def _chunk(text, limit=4000):
     return out
 
 
+def _salvage_field(raw, field):
+    """Pull one JSON string field out of possibly-truncated/malformed output."""
+    m = re.search(rf'"{field}"\s*:\s*"((?:[^"\\]|\\.)*)', raw)
+    if not m:
+        return None
+    frag = m.group(1)
+    try:
+        return json.loads('"' + frag + '"')            # proper unescape
+    except Exception:
+        return frag.replace("\\n", "\n").replace('\\"', '"').replace("\\t", "\t")
+
+
 def format_proposal_messages(raw):
     """Turn the brain's JSON (or plain text) into paste-ready Telegram messages:
     cover letter first, then screening answers, then private notes."""
@@ -615,7 +630,19 @@ def format_proposal_messages(raw):
     except Exception:
         data = None
     if not isinstance(data, dict):
-        return _chunk(f"📝 Draft proposal — review, tweak, send:\n\n{raw}")
+        # JSON was malformed/truncated — salvage the cover letter so we NEVER dump raw JSON.
+        letter = _salvage_field(raw, "cover_letter")
+        if letter:
+            head = []
+            t = _salvage_field(raw, "recommended_title")
+            r = _salvage_field(raw, "recommended_rate_or_price")
+            if t:
+                head.append(f"📌 {t}")
+            if r:
+                head.append(f"💵 {r}")
+            body = ("\n".join(head) + "\n\n" + letter).strip() if head else letter
+            return _chunk(body)
+        return _chunk("⚠️ The model returned an unreadable response. Tap the button to retry.")
 
     msgs = []
     head = []

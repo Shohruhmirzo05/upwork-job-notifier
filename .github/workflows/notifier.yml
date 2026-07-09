@@ -1,0 +1,56 @@
+name: Upwork Job Notifier
+
+on:
+  schedule:
+    # Every 10 min. GitHub throttles scheduled runs under load, so real cadence
+    # is ~10-15 min. You can try "*/5 * * * *" but don't expect exact 5-min.
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}   # lets you run it manually from the Actions tab
+
+# Prevent overlapping runs from racing on seen.json
+concurrency:
+  group: upwork-notifier
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # needed to commit seen.json back to the repo
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Run notifier
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          WEBSHARE_URL: ${{ secrets.WEBSHARE_URL }}   # optional; leave unset to go direct
+          KEYWORDS: ${{ vars.KEYWORDS }}
+          EXCLUDE_KEYWORDS: ${{ vars.EXCLUDE_KEYWORDS }}
+          MAX_PAGES: ${{ vars.MAX_PAGES }}
+          # Optional AI scoring — set the ANTHROPIC_API_KEY secret to enable
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          MIN_SCORE: ${{ vars.MIN_SCORE }}
+          SCORE_MODEL: ${{ vars.SCORE_MODEL }}
+          PROFILE: ${{ vars.PROFILE }}
+        run: python notifier.py
+
+      - name: Persist seen.json
+        run: |
+          if [[ -n "$(git status --porcelain seen.json)" ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add seen.json
+            git commit -m "chore: update seen jobs [skip ci]"
+            git push
+          else
+            echo "No change to seen.json"
+          fi

@@ -658,6 +658,35 @@ def _generate(prompt, json_mode=False, max_tokens=8192):
     return None
 
 
+def _clean_text(t):
+    """Strip AI-isms so text reads like a human typed it: smart/curly quotes -> straight,
+    em/en dashes -> comma/hyphen, ellipsis normalized, markdown (bold/italic/headings/backticks)
+    removed, wrapping quotes stripped. Keeps plain hyphen bullets."""
+    if not t:
+        return t
+    for c in "“”„‟″«»":   # curly/other double quotes
+        t = t.replace(c, '"')
+    for c in "‘’‚‛′":               # curly single quotes / apostrophes
+        t = t.replace(c, "'")
+    t = re.sub(r"\s*—\s*", ", ", t)                     # em dash -> ", "
+    t = t.replace("–", "-").replace("−", "-")      # en dash / minus -> hyphen
+    t = t.replace("…", "...")                           # ellipsis
+    t = t.replace(" ", " ").replace(" ", " ").replace("​", "")
+    t = re.sub(r"^\s*[\*•]\s+", "- ", t, flags=re.M)    # * or bullet char -> "- "
+    t = re.sub(r"\*\*(.+?)\*\*", r"\1", t)                   # **bold**
+    t = re.sub(r"\*(.+?)\*", r"\1", t)                       # *italic*
+    t = t.replace("`", "")
+    t = re.sub(r"^\s{0,3}#{1,6}\s*", "", t, flags=re.M)      # markdown headings
+    t = re.sub(r"\s+,", ",", t)
+    t = re.sub(r",\s*,", ", ", t)
+    t = re.sub(r",\s*([.!?])", r"\1", t)                     # ", ." -> "."
+    t = re.sub(r"[ \t]{2,}", " ", t)
+    t = re.sub(r"\n{3,}", "\n\n", t).strip()
+    if len(t) >= 2 and t[0] == '"' and t[-1] == '"' and t[1:-1].count('"') == 0:
+        t = t[1:-1].strip()                                 # unwrap a fully-quoted answer
+    return t
+
+
 def generate_proposal(job):
     """Draft a proposal with the proposal-brain prompt. Returns raw model text or None."""
     template = load_prompt_template()
@@ -672,19 +701,23 @@ def generate_answers(job, questions):
     profile = load_profile()
     proposal = job.get("proposal") or "(proposal text not stored)"
     prompt = (
-        "You answer Upwork screening questions for this freelancer, in his first-person voice, "
-        "fully consistent with the proposal already sent and his profile. Never fabricate.\n\n"
+        "You answer Upwork screening questions for this freelancer, in his first-person voice. "
+        "Base every answer on the PROPOSAL already sent for this job and his PROFILE below, so "
+        "the answers stay consistent with the proposal. Never fabricate.\n\n"
         f"PROFILE:\n{profile}\n\n"
-        f"PROPOSAL ALREADY SENT FOR THIS JOB:\n{proposal}\n\n"
+        f"PROPOSAL ALREADY SENT FOR THIS JOB (make the answers match it):\n{proposal}\n\n"
         f"JOB:\nTitle: {job.get('title', '')}\n"
         f"Description: {(job.get('description') or '')[:1200]}\n\n"
         f"CLIENT'S SCREENING QUESTIONS (there may be several in this text):\n{questions.strip()}\n\n"
         "Identify EACH distinct question and answer it separately.\n"
         "Return JSON only: {\"answers\":[{\"question\":\"...\",\"answer\":\"...\"}]}, one object "
         "per question, in the order asked.\n"
-        "Each answer: 1-4 sentences, first person, consistent with the proposal (same projects, "
-        "links, rate, claims), hyphen bullets if listing, no asterisks, no emojis, no fabrication, "
-        "paste-ready with no preamble.\n"
+        "Each answer: 1-4 sentences, first person, reusing the same projects, links, rate and "
+        "claims from the proposal.\n"
+        "WRITING STYLE — very important: write like a human typing naturally. Plain text only. "
+        "Use straight apostrophes ('), never curly/smart quotes. NEVER use em-dashes or en-dashes "
+        "(use a comma or a new sentence). No markdown, no bold, no asterisks, no emojis, no "
+        "wrapping quotation marks. Paste-ready, no preamble.\n"
     )
     raw = _generate(prompt, json_mode=True, max_tokens=4096)
     if not raw:
@@ -692,7 +725,8 @@ def generate_answers(job, questions):
     try:
         m = re.search(r"\{.*\}", raw, re.DOTALL)
         arr = json.loads(m.group(0) if m else raw).get("answers") or []
-        out = [((x.get("question") or "").strip(), (x.get("answer") or "").strip())
+        out = [(_clean_text((x.get("question") or "").strip()),
+                _clean_text((x.get("answer") or "").strip()))
                for x in arr if (x.get("answer") or "").strip()]
         return out or None
     except Exception:
@@ -708,10 +742,11 @@ def _extract_cover(raw):
         m = re.search(r"\{.*\}", raw, re.DOTALL)
         d = json.loads(m.group(0) if m else raw)
         if isinstance(d, dict):
-            return (d.get("cover_letter") or "").strip() or None
+            return _clean_text((d.get("cover_letter") or "").strip()) or None
     except Exception:
         pass
-    return _salvage_field(raw, "cover_letter")
+    salv = _salvage_field(raw, "cover_letter")
+    return _clean_text(salv) if salv else None
 
 
 def _chunk(text, limit=4000):
@@ -750,11 +785,12 @@ def format_proposal_messages(raw):
         # JSON was malformed/truncated — salvage the cover letter so we NEVER dump raw JSON.
         letter = _salvage_field(raw, "cover_letter")
         if letter:
-            return _chunk(letter)
+            return _chunk(_clean_text(letter))
         return _chunk("⚠️ The model returned an unreadable response. Tap the button to retry.")
 
     # Message 1: the cover letter only — paste-ready, no header noise.
-    msgs = _chunk((data.get("cover_letter") or "").strip() or "(empty proposal — tap to retry)")
+    msgs = _chunk(_clean_text((data.get("cover_letter") or "").strip())
+                  or "(empty proposal — tap to retry)")
 
     # Message 2: ready answers to the common Upwork screening questions.
     sa = data.get("screening_answers") or []

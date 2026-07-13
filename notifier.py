@@ -750,11 +750,19 @@ def _extract_cover(raw):
 
 
 def _chunk(text, limit=4000):
+    """Split long text into Telegram-sized pieces, breaking at a paragraph/line boundary
+    (not mid-sentence) so a >4096-char proposal reads cleanly across messages."""
     text = (text or "").strip()
     out = []
     while len(text) > limit:
-        out.append(text[:limit])
-        text = text[limit:]
+        window = text[:limit]
+        cut = window.rfind("\n\n")
+        if cut < limit * 0.5:
+            cut = window.rfind("\n")
+        if cut < limit * 0.5:
+            cut = limit
+        out.append(text[:cut].rstrip())
+        text = text[cut:].lstrip()
     if text:
         out.append(text)
     return out

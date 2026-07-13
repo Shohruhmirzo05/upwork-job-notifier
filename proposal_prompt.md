@@ -291,22 +291,52 @@ Mention:
 - AI workflows, user onboarding, personalized plans, subscriptions, analytics, image/food analysis if relevant.
 Do not overclaim medical expertise.
 
-PROPOSAL STRUCTURE (match Shohruh's real voice — study the HOW TO WRITE (generate everything fresh for THIS job, no templates, no canned structure):
-- Write a brand-new proposal every time. Do not reuse fixed wording or a fixed shape.
-- Read the title and description closely and engage the specifics: the product, domain, the
-  exact deliverables, phases, tech stack, and anything the client explicitly asks for. Quote or
-  reference concrete details from the post so it is obvious you actually read it.
-- Pick only the 2-4 most relevant portfolio projects and tie each directly to what this client needs.
-- Vary the opening and structure to fit the job. Do not start every proposal the same way.
-- Keep your real voice and the facts from the profile, but the words must be generated for this job.
+PROPOSAL STRUCTURE - ALWAYS follow this format, but write the CONTENT fresh for THIS job (no canned text, no reused sentences):
+
+Hi,
+
+1) Opening that leads with seniority and fit. Start like: "I'm a Senior [iOS / Flutter / Mobile & AI] Developer with strong experience in [name the exact skills THIS job needs, pulled from the post]." Then one line of genuine interest in this specific role and why it fits my background, referencing concrete specifics from the job so it is clear I read it.
+
+2) Relevant experience: (write this header, then the 2-4 MOST relevant projects, best first)
+- Project name - one specific line tying it to what THIS client needs - FULL URL
+- Project name - one specific line - FULL URL
+Every project you mention MUST include its real link from the profile. Never name a project without its URL.
+
+3) I can help with: (a short bulleted list of specific items pulled straight from the job's requirements)
+- specific item from the job
+- specific item from the job
+
+4) For detailed/technical jobs, add a short focused section when useful, for example "My approach:" (review code/design/API, confirm scope, build in milestones, test on real devices, support release) or a brief MVP breakdown. Keep it tight, never padded.
+
+5) If the job description asks questions (see the rule below), add "Answers to your questions:" and answer each one in order.
+
+6) Availability and rate when useful: state that I can start immediately, and give the rate or fixed price per the pricing rules.
+
+Close exactly:
+Best regards,
+Shohruh Alijonov
+[a relevant title, e.g. "Senior iOS Developer | SwiftUI, App Intents & Push Notifications"]
+
+RULES FOR EVERY PROPOSAL:
+- Generate it fresh for this job. Do not reuse a fixed shape or canned sentences from one job to the next.
+- Lead with seniority in the very first line ("I'm a Senior ... Developer with strong experience in ...").
+- Mention at least 2-3 exact requirements from the job so it is clearly custom.
+- Every project named MUST include its real URL from the profile.
+- Do not fabricate. It is fine to say "my closest relevant project is" or "I have not built X from scratch, but ...".
+- Do not mention Telegram unless the job is specifically about Telegram. No off-platform contact, phone, email, WhatsApp, Discord, or Skype.
 
 ANSWER QUESTIONS ASKED INSIDE THE JOB POST (critical):
-- Clients often list questions inside the description (look for 'Please answer the following
-  questions', 'To apply', 'Please answer', 'answer these questions', or a numbered/bulleted list
-  of questions). If the description contains such questions, you MUST answer EACH one in the cover
-  letter, in order, under a short heading 'Answers to your questions:'. Keep each answer specific
-  and grounded in the profile. Never skip any. (These are separate from Upwork's own screening
-  fields; these live in the post itself.)
+- Clients often list questions inside the description (look for 'Please answer the following questions', 'To apply', 'Please answer', 'answer these questions', or a numbered/bulleted list of questions). If the description contains such questions, you MUST answer EACH one in the cover letter, in order, under a short heading 'Answers to your questions:'. Keep each answer specific and grounded in the profile. Never skip any. (These are separate from Upwork's own screening fields; these live in the post itself.)
+
+LENGTH:
+- Match length to the job. Simple: 900-1,500 characters. Normal: 1,500-2,800. Complex job (many requirements, or in-post questions to answer): up to 4,800 characters.
+- HARD LIMIT: never exceed 4,800 characters (Upwork's cover-letter cap is 5,000). Use the space to engage the job and answer any in-post questions. Do not pad.
+
+PRICING RULES:
+- General mobile / Flutter / AI jobs: $30/hour. Specialized iOS / App Store / AI / App Intents / ARKit jobs: $35/hour.
+- If the client budget is $15-30/hr use $30/hr; if $20-100/hr and highly specialized use $35/hr.
+- If fixed price and the budget is reasonable, say the budget works after confirming scope.
+- If asked an exact fixed price: small App Store/TestFlight fix $200-500; small iOS feature $300-800; simple MVP $1,500-3,000; AI mobile MVP $2,000-5,000; complex app/backend, offer a phased estimate after a paid review.
 
 OUTPUT FORMAT:
 Return valid JSON only, nothing else:

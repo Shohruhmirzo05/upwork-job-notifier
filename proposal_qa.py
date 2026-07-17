@@ -95,7 +95,16 @@ def deterministic_audit(job, cover):
     preview_lower = preview.lower()
     words = re.findall(r"\b[\w'+.-]+\b", cover or "")
     urls = re.findall(r"https?://\S+", cover or "")
-    projects = [name for name in KNOWN_PROJECTS if name.lower() in (cover or "").lower()]
+    # Match longest names first and consume them so "Salom AI" is not double-counted
+    # inside "Salom AI Business".
+    project_text = (cover or "").lower()
+    projects = []
+    for name in sorted(KNOWN_PROJECTS, key=len, reverse=True):
+        needle = name.lower()
+        if needle in project_text:
+            projects.append(name)
+            project_text = project_text.replace(needle, " ")
+    projects.sort(key=KNOWN_PROJECTS.index)
     questions = [line for line in (cover or "").splitlines() if line.strip().endswith("?")]
 
     title_terms = {w.lower() for w in re.findall(r"[A-Za-z][A-Za-z0-9.+#-]{2,}",

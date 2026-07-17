@@ -1028,6 +1028,9 @@ def _handle_callback(cq, store):
             tg_reply(chat_id, mid, "⚠️ I no longer have this job's details (expired). "
                                    "Open it on Upwork to apply.")
             return
+        # Backfill the key for jobs restored from a pre-tracker Actions cache. New jobs
+        # already store it, but this makes the rollout compatible with the last 26h of cards.
+        job.setdefault("cipher", data[2:])
         print(f"[info] proposal requested: {job['title'][:60]!r}")
         raw = generate_proposal(job)
         if not raw:
@@ -1088,6 +1091,7 @@ def _handle_message(msg, store):
         store.pop("awaiting", None)
         tg_reply(chat_id, mid, "⚠️ That job expired from my memory. Generate a fresh proposal first.")
         return
+    job.setdefault("cipher", aw["cipher"])
     aw["ts"] = time.time()                          # keep armed for follow-up questions
     print(f"[info] answering questions for: {job['title'][:50]!r}")
     answers = generate_answers(job, text)

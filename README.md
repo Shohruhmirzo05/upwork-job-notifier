@@ -18,6 +18,9 @@ back-to-back), so you're pinged **~1–2 min after a matching job is posted**. E
 5. Skips anything posted more than `MAX_AGE_HOURS` (24h) ago.
 6. Sends each new job scoring ≥ `min_score` to Telegram — tagged **🔥 HOT / 🟢 GOOD / 🟡 MAYBE**,
    best score first, showing which keywords hit and how long ago it was posted.
+7. Mirrors every delivered job, generated proposal, hook style, and screening answer to the
+   private [Proposal Radar](https://upworkproposals.fera-tech.com) tracker. Tracker failures
+   are best-effort and never interrupt Telegram notifications.
 
 It **never logs in as you** — only public listings — so your Upwork account is not in the
 loop. Worst case is a proxy IP getting blocked, not your profile flagged. Still a ToS grey
@@ -77,6 +80,47 @@ Variables (simple comma lists).
 - Bot: **@upwork_notificationsbot** → your chat. Secrets `TELEGRAM_BOT_TOKEN` +
   `TELEGRAM_CHAT_ID`: **set**.
 - Baseline seeded. It's running on the ~10-min cron now.
+- Private tracker: **https://upworkproposals.fera-tech.com** on Cloudflare Workers + D1.
+  Its login lasts 30 days; the generated password is stored only in the local ignored
+  `.tracker-credentials` file and encrypted Cloudflare Worker secrets.
+
+---
+
+## Proposal Radar tracker
+
+`tracker/` is a mobile-first application pipeline running entirely on Cloudflare's free tier.
+
+- **Job inbox:** every matching job actually sent to Telegram, with compact cards and full
+  details in a tap-open drawer/bottom sheet.
+- **Applications:** generating a proposal moves the job here as **Likely applied**. Confirm it
+  with one tap, or mark **Didn't apply** so it never pollutes conversion stats.
+- **Pipeline:** Applied → Viewed → Replied → Interview → Won/Lost, with an immutable event
+  history, notes, and labels.
+- **Search:** title, description, Upwork cipher/link, proposal, or labels. Pasting the complete
+  Telegram notification resolves the embedded Upwork job ID directly.
+- **Proposal record:** exact submitted draft, hook family, and screening answers remain attached
+  to the job for later client conversations.
+- **Performance:** confirmed-only funnel rates and results grouped by proof-led, diagnostic,
+  plan-led, and outcome-led openings. Small-sample guidance prevents premature conclusions.
+- **Security:** single-admin password, signed `HttpOnly`/`Secure`/`SameSite=Strict` 30-day cookie,
+  separate notifier ingestion token, same-origin API, CSP, and no public tracker data.
+
+Cloudflare resources:
+
+- Worker/custom domain: `upwork-proposals` / `upworkproposals.fera-tech.com`
+- D1 database: `upwork-proposals` (schema migrations in `tracker/migrations/`)
+- Worker secrets: `ADMIN_PASSWORD`, `SESSION_SECRET`, `INGEST_TOKEN`
+
+Local verification/deploy:
+
+```bash
+cd tracker
+npm install
+npm run typecheck
+npm run build
+npx wrangler d1 migrations apply upwork-proposals --remote
+npm run deploy
+```
 
 ### Optional GitHub Variables (all have sane defaults)
 Repo → **Settings → Secrets and variables → Actions → Variables**:

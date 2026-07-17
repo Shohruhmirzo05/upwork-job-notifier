@@ -408,12 +408,14 @@ OUTPUT FORMAT:
 Return valid JSON only, nothing else:
 
 {
+  "hook_type": "one of: proof-led, diagnostic, plan-led, outcome-led",
   "cover_letter": "the complete paste-ready cover letter, ending with Best regards, Shohruh Alijonov, and a relevant title"
 }
 
 If, and only if, {{QUESTIONS}} contains real Upwork screening questions, add:
 
 {
+  "hook_type": "one of: proof-led, diagnostic, plan-led, outcome-led",
   "cover_letter": "...",
   "screening_answers": [
     {"question": "the client's first question", "answer": "direct first-person answer"}

@@ -78,6 +78,10 @@ AI_ENABLED = bool(GEMINI_API_KEY or OPENAI_API_KEY)
 PROFILE_PATH = Path(os.environ.get("PROFILE_PATH", "profile.md"))
 PROMPT_PATH = Path(os.environ.get("PROMPT_PATH", "proposal_prompt.md"))
 
+# ---- private proposal/application tracker (optional; failures never block Telegram) ----
+TRACKER_API_URL = os.environ.get("TRACKER_API_URL", "").strip().rstrip("/")
+TRACKER_API_TOKEN = os.environ.get("TRACKER_API_TOKEN", "").strip()
+
 # ---- serve loop + button-tap handling ----
 JOB_INTERVAL = _int_env("CHECK_INTERVAL", 90)   # seconds between job scans in serve mode
 SERVE_SECONDS = _int_env("SERVE_SECONDS", 0)    # >0 -> run the serve loop this many seconds
@@ -484,6 +488,35 @@ def send(job, cfg):
     )
     if r.status_code != 200:
         print(f"[warn] telegram {r.status_code}: {r.text[:200]}", file=sys.stderr)
+        return False
+    return True
+
+
+def _tracker_job(job):
+    """Normalize notifier jobs for the private Cloudflare tracker."""
+    return {
+        "cipher": job.get("cipher", ""), "title": job.get("title", ""),
+        "description": job.get("description", ""), "skills": job.get("skills", []),
+        "matched": job.get("matched", []), "budget": fmt_budget(job),
+        "link": job.get("link", ""), "publish_time": job.get("publish", ""),
+        "score": job.get("score", 0), "tier": clean_tier(job.get("tier", "")),
+    }
+
+
+def tracker_ingest(event, job, **extra):
+    """Best-effort event delivery. The notifier remains fully functional if tracker is down."""
+    if not TRACKER_API_URL or not TRACKER_API_TOKEN or not job.get("cipher"):
+        return
+    payload = {"event": event, "job": _tracker_job(job), **extra}
+    try:
+        r = requests.post(
+            f"{TRACKER_API_URL}/api/ingest", json=payload,
+            headers={"Authorization": f"Bearer {TRACKER_API_TOKEN}"}, timeout=8,
+        )
+        if r.status_code >= 300:
+            print(f"[warn] tracker {r.status_code}: {r.text[:160]}", file=sys.stderr)
+    except Exception as e:
+        print(f"[warn] tracker delivery failed: {e}", file=sys.stderr)
 
 
 def send_plain(text):
@@ -754,6 +787,13 @@ def _proposal_hard_failures(raw):
     if len(projects) > 2:
         failures.append(f"uses {len(projects)} portfolio projects")
 
+    # Launchcast is verified as a live iOS publishing/notification product, not as a
+    # maps case study. This catches the specific unsupported inference seen in live QA.
+    if "launchcast" in cover.lower() and re.search(
+            r"\b(map marker|map markers|map pin|map pins|mapping feature|custom map)\b",
+            cover, re.I):
+        failures.append("attributes an unverified maps feature to Launchcast")
+
     questions = [line for line in cover.splitlines() if line.strip().endswith("?")]
     if len(questions) > 1:
         failures.append(f"uses {len(questions)} closing questions")
@@ -817,6 +857,32 @@ def _extract_cover(raw):
         pass
     salv = _salvage_field(raw, "cover_letter")
     return _clean_text(salv) if salv else None
+
+
+def _extract_proposal_metadata(raw):
+    """Return the tracked hook family and any model-prepared screening answers."""
+    data = {}
+    try:
+        m = re.search(r"\{.*\}", raw or "", re.DOTALL)
+        parsed = json.loads(m.group(0) if m else raw)
+        if isinstance(parsed, dict):
+            data = parsed
+    except Exception:
+        pass
+    hook = str(data.get("hook_type") or "").strip().lower()
+    if hook not in {"proof-led", "diagnostic", "plan-led", "outcome-led"}:
+        opening = re.sub(r"^\s*Hi,?\s*", "", _extract_cover(raw) or "", flags=re.I)
+        opening = opening.split("\n\n", 1)[0].lower()
+        if re.search(r"\b(shipped|built|published|live|app store|production)\b", opening):
+            hook = "proof-led"
+        elif re.search(r"\b(risk|bottleneck|failure|issue|problem|before|depends on)\b", opening):
+            hook = "diagnostic"
+        elif re.search(r"\b(first|start|milestone|phase|plan|week|day one)\b", opening):
+            hook = "plan-led"
+        else:
+            hook = "outcome-led"
+    screening = data.get("screening_answers") or []
+    return hook, screening if isinstance(screening, list) else []
 
 
 def _chunk(text, limit=4000):
@@ -929,6 +995,8 @@ def remember_job(store, job):
         "job_type": job["job_type"], "hourly_min": job["hourly_min"],
         "hourly_max": job["hourly_max"], "fixed": job["fixed"],
         "link": job["link"], "score": job.get("score", 0), "ts": time.time(),
+        "matched": job.get("matched", []), "tier": job.get("tier", ""),
+        "publish": job.get("publish", ""), "cipher": job.get("cipher", ""),
     }
 
 
@@ -969,6 +1037,9 @@ def _handle_callback(cq, store):
         cover = _extract_cover(raw)
         if cover:
             job["proposal"] = cover                 # store so answers can align with it
+            hook_type, screening = _extract_proposal_metadata(raw)
+            tracker_ingest("proposal_generated", job, proposal=cover,
+                           hook_type=hook_type, screening=screening)
         chunks = format_proposal_messages(raw)
         for i, chunk in enumerate(chunks):
             last = i == len(chunks) - 1
@@ -1030,6 +1101,8 @@ def _handle_message(msg, store):
         head = f"<b>❓ {esc(q)}</b>\n" if q else f"<b>Answer {i}</b>\n"
         tg_reply(chat_id, target, f"{head}<pre>{esc(a)}</pre>", parse_mode="HTML")
         time.sleep(0.35)
+    tracker_ingest("screening_generated", job,
+                   screening=[{"question": q, "answer": a} for q, a in answers])
 
 
 def handle_updates(cfg, long_poll=0):
@@ -1125,7 +1198,9 @@ def run_job_check(cfg, proxy):
 
     store = load_store()
     for j in to_send:
-        send(j, cfg)                 # card + on-demand proposal button
+        delivered = send(j, cfg)     # card + on-demand proposal button
+        if delivered:
+            tracker_ingest("notified", j)
         remember_job(store, j)       # so a later tap can look this job up
         time.sleep(0.6)              # gentle on Telegram rate limits
     save_store(store)

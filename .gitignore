@@ -16,3 +16,9 @@ store.json
 
 # manual proposal QA artifacts
 proposal-qa-output/
+
+# Cloudflare tracker build/runtime + local credentials
+tracker/node_modules/
+tracker/dist/
+tracker/.wrangler/
+.tracker-credentials

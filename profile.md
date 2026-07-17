@@ -16,7 +16,7 @@ Full-stack AI English-speaking companion for Uzbek learners, built with Flutter 
 https://bandmate.uz/
 
 Salom AI Business:
-Separate production B2B AI automation platform for businesses. Built responsive landing, onboarding, dashboard, backend-connected operations, business-specific prompting, multi-tenant RAG isolation, AI response previews, subscriptions/payment gating, admin and analytics flows, and deployment automation. The operations layer supports products, services, variants, stock, reservations, courses, capacity, appointments, multiple branches, phone/call-center routes, locations, fulfilment, and industry-specific workflows. Voice messages use speech-to-text before entering the company-isolated AI/RAG flow. Mention Telegram or Instagram only when the Upwork job specifically asks about those channels.
+Separate production B2B AI chatbot, AI operator, and business-integration platform. It learns each company's approved information, answers customer questions in the business's voice, collects qualified leads, orders, applications, or bookings, and hands uncertain or important conversations to a human. I built the responsive product experience, onboarding, operations dashboard, backend-connected workflows, business-specific prompting, company-isolated RAG, private response previews, subscriptions/payment gating, admin/analytics, automated tests, and deployment automation. The operations layer supports products, services, variants, inventory, reservations, courses, capacity, appointments, multiple branches, locations, phone/call-center routing, fulfilment, and CRM/ERP or internal-system integrations. The dashboard brings conversations, customers, outcomes, unanswered questions, AI readiness, and human handoffs together. Voice messages use speech-to-text before entering the company-isolated AI/RAG flow. Mention Telegram or Instagram only when the Upwork job specifically asks about those channels.
 https://business.salom-ai.uz/
 
 Salom AI:
@@ -53,7 +53,7 @@ Published native iOS arcade game with daily challenges, Game Center leaderboards
 https://apps.apple.com/uz/app/quarcade/id6752634023
 
 Kowl:
-Production iOS marketplace/social-style app with user profiles, creator flows, backend integration, and App Store delivery.
+Published AI-powered iOS product for independent artists and music-career growth, not a marketplace. I contributed to the iOS application and backend-connected product flows. Kowl combines personalized daily action plans, real-time performance analytics, intelligent promotion and playlist/curator discovery, professional networking, and AI tools for artist pitches, biographies, contract review, and artistic business cards. It is live on the App Store.
 https://apps.apple.com/uz/app/kowl-everything-for-artists/id6502518316
 
 Karly:

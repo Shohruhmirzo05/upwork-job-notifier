@@ -13,3 +13,6 @@ __pycache__/
 
 # on-demand proposal job store (runtime only, cached in Actions)
 store.json
+
+# manual proposal QA artifacts
+proposal-qa-output/

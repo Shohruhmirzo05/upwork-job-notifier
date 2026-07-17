@@ -1,0 +1,46 @@
+name: Proposal QA
+
+on:
+  workflow_dispatch:
+    inputs:
+      count:
+        description: Number of diverse live jobs to test
+        required: true
+        default: "8"
+        type: choice
+        options: ["5", "6", "7", "8", "9", "10"]
+
+permissions:
+  contents: read
+
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      WEBSHARE_URL: ${{ secrets.WEBSHARE_URL }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+      OPENAI_REASONING: low
+      MAX_AGE_HOURS: "24"
+      JOBS_PER_QUERY: "30"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Generate and evaluate proposals
+        run: python proposal_qa.py --count "${{ inputs.count }}" --output-dir proposal-qa-output
+      - name: Upload QA report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proposal-qa-${{ github.run_id }}
+          path: proposal-qa-output/
+          if-no-files-found: error
+          retention-days: 7

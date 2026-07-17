@@ -147,16 +147,19 @@ Verified facts:
 - Backend and admin are live; mobile apps are in release preparation, not published stores.
 
 2. Salom AI Business
-Type: Production B2B AI automation, multi-tenant RAG, CRM/operations, web/backend
+Type: Production B2B AI chatbot/operator, multi-tenant RAG, CRM/operations, integrations, web/backend
 Link: https://business.salom-ai.uz/
-Use for: business automation, AI agents, customer support automation, RAG, multi-tenant SaaS, CRM/ERP-style workflows, inventory, booking, education/clinic/retail operations, payments, responsive dashboards, integrations, prompt engineering, caching, data isolation, CI/CD.
+Use for: B2B AI chatbots, AI operators, business automation, AI agents, customer support and sales automation, lead/order/booking capture, human handoff, RAG, multi-tenant SaaS, CRM/ERP workflows and integrations, inventory, education/clinic/retail operations, payments, responsive dashboards, prompt engineering, caching, data isolation, testing, and CI/CD.
 Verified facts:
 - Separate product and backend from consumer Salom AI.
-- Business-specific onboarding, prompting, knowledge, and AI response behavior.
+- Learns each business's approved information, tone, offerings, locations, and operating rules through business-specific onboarding, prompting, and knowledge.
+- Answers customer questions, collects qualified leads, orders, applications, or bookings, and hands uncertain or important conversations to a human.
 - Company-isolated documents and operational data with cross-tenant leakage tests.
 - Products, services, variants, SKUs, inventory, reservation/deduction/restoration, courses, capacity, appointments, bookings, branches, locations, phone/call-center routes, and fulfilment.
 - Industry behavior for retail, education, clinics, restaurants, hotels, rentals, real estate, fitness, logistics, manufacturing, and custom businesses.
-- Subscription/payment gates, five private AI previews, admin/analytics, responsive web UX, automated tests, and production deployment.
+- Dashboard visibility into conversations, customers, outcomes, unanswered questions, AI readiness, and conversations waiting for a person.
+- CRM, ERP, internal-system, and custom-agent/RAG integration capability for larger deployments.
+- Subscription/payment gates, five private AI-response previews, admin/analytics, responsive web UX, automated tests, and production deployment.
 - Voice messages are transcribed before entering the company-isolated RAG/operations flow.
 - Mention Telegram/Instagram channel details only if the job explicitly asks about those platforms.
 
@@ -236,9 +239,16 @@ Verified facts:
 - Published on the App Store.
 
 10. Kowl
-Type: Published iOS marketplace/social/profile app
+Type: Published AI-powered iOS music-career and artist-growth product
 Link: https://apps.apple.com/uz/app/kowl-everything-for-artists/id6502518316
-Use for: marketplace, profiles, creators, social flows, backend integration, existing codebases, App Store delivery.
+Use for: AI consumer apps, music and creator tools, personalized strategy/action plans, analytics dashboards, AI content generation, contract-assistance workflows, professional networking, subscription products, backend integration, existing iOS codebases, and App Store delivery.
+Verified facts:
+- Kowl is not a marketplace. It is an all-in-one product for independent artists that combines AI tools with strategic music-career data.
+- Shohruh contributed to the iOS application and backend-connected product flows. Do not imply he created the entire product alone.
+- Personalized daily action plans and real-time performance monitoring help artists improve visibility and track progress.
+- Intelligent promotion includes playlist and independent-curator discovery; networking connects artists with professionals and curators.
+- AI tools include an artist pitch generator, biography creation, smart contract review, and artistic business cards.
+- Published on the App Store.
 
 11. Karly
 Type: Consumer iOS app used at scale
@@ -309,8 +319,12 @@ Food / kitchen / nutrition / cosmetics / lifestyle:
 - Use Goby AI for image scanning/classification.
 - Do not make medical or regulated-health claims.
 
-Marketplace / profiles / social / matching:
-- Use Kowl and Karly, then add the closest mobile/backend proof if needed.
+Music / artists / creator growth / AI strategy tools:
+- Lead with Kowl for artist growth, music analytics, AI-generated pitches or biographies, playlist/curator discovery, contract-assistance flows, and creator networking.
+- Do not describe Kowl as a marketplace.
+
+Profiles / social / matching:
+- Use Karly for mature consumer social/profile experience. Use Kowl only when the job also involves artists, music, professional networking, or personalized AI tools.
 
 Payments / subscriptions:
 - Select the product closest to the requested stack.

@@ -2,8 +2,11 @@
 
 - Source visual truth: `/var/folders/cz/pyq35x4j5wb0t9b664drgr300000gn/T/TemporaryItems/NSIRD_screencaptureui_eRjI0n/Screenshot 2026-07-17 at 23.59.55.png`
 - Original mobile issue evidence: `/var/folders/cz/pyq35x4j5wb0t9b664drgr300000gn/T/codex-clipboard-8492ebef-31b3-4e03-9116-60fb6869a65b.png`
+- Status-control issue evidence: `/var/folders/cz/pyq35x4j5wb0t9b664drgr300000gn/T/TemporaryItems/NSIRD_screencaptureui_4tm9Ta/Screenshot 2026-07-18 at 01.32.30.png`
 - Implementation inbox capture: `design-qa-mobile-inbox.png`
 - Implementation drawer capture: `design-qa-mobile-drawer.png`
+- Simplified card controls capture: `design-qa-status-mobile.png`
+- Simplified status drawer capture: `design-qa-status-drawer-mobile.png`
 - Combined source/implementation comparison: `design-qa-comparison.png`
 - Primary viewport: 390 × 844
 - Secondary viewport: 1440 × 900
@@ -46,6 +49,18 @@ No actionable P0/P1/P2 issues remain.
 - Icons: all redesigned icons use one regular-weight Phosphor family with consistent sizing and alignment.
 - States and interactions: authenticated reload, loading, populated inbox, bottom navigation, job open/close, fixed drawer header, and desktop responsive state were tested. No browser console errors were reported.
 - Accessibility: labeled controls, visible focus states, reduced-motion support, sufficient contrast, practical mobile targets, semantic buttons/links, and safe-area accommodation are present.
+
+### Status-control iteration
+
+- [P1] The drawer removed the current status from its action list, so every update visibly changed and reordered the available controls.
+  - Fix: keep Applied, Viewed, Replied, Interview, and Won in a permanent order; keep the current stage visible, selected, and disabled; place Lost and Didn't apply in one stable More menu.
+  - Evidence: `design-qa-status-drawer-mobile.png` shows six large top-level targets in a fixed 2 × 3 mobile grid, with Viewed still present and marked Current. The live transition from Viewed to Replied preserved the exact order and moved only the selected state.
+- [P1] Updating a job required opening its details drawer.
+  - Fix: add two large inline card controls: one context-aware next action and one complete status selector. The next action advances the normal pipeline while the selector handles corrections, regressions, Lost, and Didn't apply.
+  - Evidence: `design-qa-status-mobile.png` shows Mark applied and Change status directly on every inbox card. A synthetic live job successfully moved New → Applied from the card, Applied → Viewed from the selector, and Viewed → Replied from the drawer.
+- [P2] The former controls were too small and crowded for confident mobile use.
+  - Fix: use 46px card controls and 58px drawer targets on mobile, with Phosphor icons and explicit labels.
+  - Post-fix checks: 390 × 844 rendered with `scrollWidth = innerWidth`, the top section remained visible, the temporary QA record was removed after testing, and the browser console contained no errors.
 
 ## Follow-up polish
 

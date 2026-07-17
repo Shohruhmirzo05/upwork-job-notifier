@@ -47,6 +47,37 @@ const statusLabel: Record<Status, string> = {
   interview: 'Interview', won: 'Won', lost: 'Lost', skipped: "Didn't apply",
 };
 
+const statusIcon: Record<Status, string> = {
+  new: 'ph-inbox', generated: 'ph-file-text', applied: 'ph-paper-plane-tilt', viewed: 'ph-eye',
+  replied: 'ph-chat-circle-dots', interview: 'ph-video-camera', won: 'ph-trophy',
+  lost: 'ph-x-circle', skipped: 'ph-skip-forward',
+};
+
+const selectableStatuses: Array<{ value: Status; label: string }> = [
+  { value: 'new', label: 'Back to inbox' },
+  { value: 'applied', label: 'Applied' },
+  { value: 'viewed', label: 'Viewed by client' },
+  { value: 'replied', label: 'Client replied' },
+  { value: 'interview', label: 'Interview' },
+  { value: 'won', label: 'Won' },
+  { value: 'lost', label: 'Lost' },
+  { value: 'skipped', label: "Didn't apply" },
+];
+
+function nextStatus(job: Job): { value: Status; label: string; icon: string } | null {
+  const next: Partial<Record<Status, { value: Status; label: string; icon: string }>> = {
+    new: { value: 'applied', label: 'Mark applied', icon: 'ph-paper-plane-tilt' },
+    generated: { value: 'applied', label: 'Confirm applied', icon: 'ph-paper-plane-tilt' },
+    applied: { value: 'viewed', label: 'Client viewed', icon: 'ph-eye' },
+    viewed: { value: 'replied', label: 'Mark replied', icon: 'ph-chat-circle-dots' },
+    replied: { value: 'interview', label: 'Got interview', icon: 'ph-video-camera' },
+    interview: { value: 'won', label: 'Mark won', icon: 'ph-trophy' },
+    lost: { value: 'applied', label: 'Reopen as applied', icon: 'ph-arrow-counter-clockwise' },
+    skipped: { value: 'applied', label: 'Reopen as applied', icon: 'ph-arrow-counter-clockwise' },
+  };
+  return next[job.status] ?? null;
+}
+
 function esc(value: unknown): string {
   return String(value ?? '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]!);
 }
@@ -177,6 +208,7 @@ async function loadJobs(): Promise<void> {
 
 function jobCard(job: Job): string {
   const chips = [...(job.matched ?? []), ...(job.skills ?? [])].filter(Boolean).slice(0, 3);
+  const next = nextStatus(job);
   return `
     <article class="job-card" data-cipher="${esc(job.cipher)}" tabindex="0">
       <div class="card-top">
@@ -186,7 +218,17 @@ function jobCard(job: Job): string {
       <h3>${esc(job.title)}</h3>
       <div class="job-meta"><strong>${esc(job.budget || 'Budget not listed')}</strong>${job.score ? `<span>Match ${job.score}</span>` : ''}</div>
       <div class="chips">${chips.map(chip => `<span>${esc(chip)}</span>`).join('')}</div>
-      ${job.status === 'generated' ? `<div class="quick-actions"><button data-action="apply" data-cipher="${esc(job.cipher)}">Confirm applied</button><button class="quiet" data-action="skip" data-cipher="${esc(job.cipher)}">Didn't apply</button></div>` : ''}
+      <div class="card-status-controls">
+        ${next ? `<button class="card-next" data-card-status="${next.value}" data-cipher="${esc(job.cipher)}"><i class="ph ${next.icon}"></i><span>${next.label}</span></button>` : `<span class="card-complete"><i class="ph ph-check-circle"></i> Pipeline complete</span>`}
+        <label class="card-status-select">
+          <i class="ph ph-sliders-horizontal"></i>
+          <select data-card-select data-cipher="${esc(job.cipher)}" aria-label="Change status for ${esc(job.title)}">
+            <option value="">Change status</option>
+            ${selectableStatuses.map(option => `<option value="${option.value}" ${option.value === job.status ? 'disabled' : ''}>${esc(option.label)}</option>`).join('')}
+          </select>
+          <i class="ph ph-caret-down"></i>
+        </label>
+      </div>
       ${job.tags?.length ? `<div class="card-tags">${job.tags.map(tag => `<span>#${esc(tag)}</span>`).join('')}</div>` : ''}
       <span class="card-arrow"><i class="ph ph-caret-right"></i></span>
     </article>`;
@@ -220,14 +262,20 @@ function renderJobs(): void {
   document.querySelector('#refresh')?.addEventListener('click', () => void loadJobs());
   document.querySelectorAll<HTMLElement>('.job-card').forEach(card => {
     card.addEventListener('click', event => {
-      if ((event.target as HTMLElement).closest('button')) return;
+      if ((event.target as HTMLElement).closest('button, select, label, details, summary')) return;
       const job = jobs.find(item => item.cipher === card.dataset.cipher);
       if (job) openJob(job);
     });
     card.addEventListener('keydown', event => { if (event.key === 'Enter') card.click(); });
   });
-  document.querySelectorAll<HTMLButtonElement>('[data-action]').forEach(button => button.addEventListener('click', () => {
-    void setStatus(button.dataset.cipher!, button.dataset.action === 'apply' ? 'applied' : 'skipped');
+  document.querySelectorAll<HTMLButtonElement>('[data-card-status]').forEach(button => button.addEventListener('click', () => {
+    button.disabled = true;
+    void setStatus(button.dataset.cipher!, button.dataset.cardStatus as Status);
+  }));
+  document.querySelectorAll<HTMLInputElement>('[data-card-select]').forEach(select => select.addEventListener('change', () => {
+    if (!select.value) return;
+    select.disabled = true;
+    void setStatus(select.dataset.cipher!, select.value as Status);
   }));
 }
 
@@ -262,8 +310,7 @@ function renderDrawer(job: Job, events: Array<Record<string, string>>): void {
   document.querySelector('.drawer-layer')?.remove();
   const layer = document.createElement('div');
   layer.className = 'drawer-layer';
-  const statuses: Status[] = job.status === 'generated'
-    ? ['applied', 'skipped'] : ['applied', 'viewed', 'replied', 'interview', 'won', 'lost', 'skipped'];
+  const mainStatuses: Status[] = ['applied', 'viewed', 'replied', 'interview', 'won'];
   const screening = (job.screening ?? []).map(item => `
     <div class="qa"><strong>${esc(item.question || 'Screening question')}</strong><p>${esc(item.answer || '')}</p><button class="copy" data-copy="${esc(item.answer || '')}">Copy answer</button></div>`).join('');
   layer.innerHTML = `
@@ -274,7 +321,17 @@ function renderDrawer(job: Job, events: Array<Record<string, string>>): void {
         <div class="drawer-title-row"><span class="status status-${esc(job.status)}"><i></i>${esc(statusLabel[job.status])}</span><span>${esc(timeAgo(job.publish_time || job.updated_at))}</span></div>
         <h2 id="drawer-title">${esc(job.title)}</h2>
         <div class="drawer-meta"><strong>${esc(job.budget || 'Budget not listed')}</strong><span>Match ${esc(job.score || '—')}</span><span>${esc(job.tier || '')}</span></div>
-        <div class="status-actions">${statuses.filter(value => value !== job.status).map(value => `<button data-status="${value}" class="${value === 'applied' || value === 'won' ? 'primary' : ''}">${esc(statusLabel[value])}</button>`).join('')}</div>
+        <div class="status-control-head"><strong>Update status</strong><span>Current: ${esc(statusLabel[job.status])}</span></div>
+        <div class="status-actions">
+          ${mainStatuses.map(value => `<button data-status="${value}" aria-pressed="${value === job.status}" class="status-option ${value === job.status ? 'current' : ''}" ${value === job.status ? 'disabled' : ''}><i class="ph ${statusIcon[value]}"></i><span>${esc(statusLabel[value])}</span>${value === job.status ? '<small>Current</small>' : ''}</button>`).join('')}
+          <details class="status-more ${job.status === 'lost' || job.status === 'skipped' ? 'current' : ''}">
+            <summary><i class="ph ph-dots-three-circle"></i><span>More</span>${job.status === 'lost' || job.status === 'skipped' ? '<small>Current</small>' : ''}</summary>
+            <div class="status-more-menu">
+              <button data-status="lost" ${job.status === 'lost' ? 'disabled' : ''}><i class="ph ph-x-circle"></i><span>Lost</span></button>
+              <button data-status="skipped" ${job.status === 'skipped' ? 'disabled' : ''}><i class="ph ph-skip-forward"></i><span>Didn't apply</span></button>
+            </div>
+          </details>
+        </div>
         ${job.link ? `<a class="upwork-link" href="${esc(job.link)}" target="_blank" rel="noopener">Open on Upwork <i class="ph ph-arrow-up-right"></i></a>` : ''}
         <section class="drawer-section"><div class="section-title"><h3>Job brief</h3></div><p class="description">${esc(job.description || 'No description stored.')}</p><div class="chips">${(job.skills ?? []).map(skill => `<span>${esc(skill)}</span>`).join('')}</div></section>
         ${job.proposal ? `<section class="drawer-section proposal"><div class="section-title"><h3>Proposal</h3><div><span class="hook">${esc(job.hook_type)}</span><button class="copy" data-copy="${esc(job.proposal)}">Copy</button></div></div><pre>${esc(job.proposal)}</pre></section>` : ''}

@@ -692,7 +692,72 @@ def generate_proposal(job):
     template = load_prompt_template()
     use_json = bool(template)
     prompt = _fill_prompt(job, template) if template else _fallback_prompt(job)
-    return _generate(prompt, json_mode=use_json)
+    raw = _generate(prompt, json_mode=use_json)
+    failures = _proposal_hard_failures(raw)
+    if not failures:
+        return raw
+
+    # Prompt instructions are not always followed consistently. One focused repair pass
+    # prevents a generic or structurally weak draft from ever reaching Telegram.
+    print(f"[info] proposal QA retry: {', '.join(failures)}", file=sys.stderr)
+    repair = (
+        f"{prompt}\n\n"
+        "A first draft failed mandatory quality checks. Rewrite it from scratch, not sentence "
+        "by sentence. Keep every factual and output-format rule from the original brief.\n"
+        f"FAILED CHECKS: {'; '.join(failures)}\n"
+        "HARD REPAIR RULES:\n"
+        "- After 'Hi,' begin with the specific technical risk, first milestone, business outcome, "
+        "or a named shipped proof. Never begin with 'I can', 'I understand', 'I would', 'I'm', "
+        "'I am', or another self-introduction.\n"
+        "- Use one close portfolio project by default and at most two.\n"
+        "- Keep all portfolio links below the preview paragraph.\n"
+        "- Keep a normal proposal between 140 and 210 words, and a complex proposal below 260.\n"
+        "- Do not infer unverified features, tools, ownership, or specialist experience.\n"
+        "- Use no more than one precise closing question.\n\n"
+        f"REJECTED FIRST DRAFT:\n{raw or '(empty)'}"
+    )
+    return _generate(repair, json_mode=use_json)
+
+
+def _proposal_hard_failures(raw):
+    """Return objective proposal failures that warrant one automatic rewrite."""
+    cover = _extract_cover(raw)
+    if not cover:
+        return ["missing or malformed cover_letter"]
+
+    failures = []
+    if not re.match(r"^\s*Hi,", cover, re.I):
+        failures.append("missing 'Hi,' greeting")
+    body = re.sub(r"^\s*Hi,?\s*", "", cover, flags=re.I).lstrip()
+    preview = body[:300]
+    if re.match(r"^(?:I can\b|I understand\b|I would\b|I'm\b|I am\b|This project\b)",
+                preview, re.I):
+        failures.append("generic self-led preview")
+    if "http" in preview.lower():
+        failures.append("portfolio link appears in preview")
+
+    word_count = len(re.findall(r"\b[\w'+.-]+\b", cover))
+    if word_count > 300:
+        failures.append(f"proposal is {word_count} words")
+
+    names = (
+        "Salom AI Business", "BandMate", "Launchcast", "CrisisPath", "Clove AI",
+        "Goby AI", "PicTrans", "QuarCade", "Kowl", "Karly", "Fera Tech", "Salom AI",
+    )
+    remaining = cover.lower()
+    projects = []
+    for name in names:  # longest/compound name appears before Salom AI
+        needle = name.lower()
+        if needle in remaining:
+            projects.append(name)
+            remaining = remaining.replace(needle, " ")
+    if len(projects) > 2:
+        failures.append(f"uses {len(projects)} portfolio projects")
+
+    questions = [line for line in cover.splitlines() if line.strip().endswith("?")]
+    if len(questions) > 1:
+        failures.append(f"uses {len(questions)} closing questions")
+    return failures
 
 
 def generate_answers(job, questions):

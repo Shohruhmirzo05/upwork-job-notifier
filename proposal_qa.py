@@ -208,6 +208,9 @@ def render_markdown(report):
     for item in report["results"]:
         job, audit = item["job"], item["deterministic_audit"]
         judge = judges.get(str(item["id"]), {})
+        hard_flags = [flag for flag in audit["flags"] if not flag.startswith("fewer than two")]
+        combined = ("pass" if audit["score"] >= 80 and not hard_flags and
+                    judge.get("verdict") == "pass" else "revise")
         lines.extend([
             f"## {item['id']}. {job['title']}", "",
             f"- Category: {job['qa_category']}",
@@ -215,6 +218,7 @@ def render_markdown(report):
             f"- Job: {job['link']}",
             f"- Deterministic QA: {audit['score']}/100",
             f"- Model QA: {judge.get('total', 'unavailable')}/100 ({judge.get('verdict', 'unavailable')})",
+            f"- Combined verdict: {combined}",
             f"- Flags: {', '.join(audit['flags']) if audit['flags'] else 'none'}",
             f"- Judge issues: {'; '.join(judge.get('issues') or []) or 'none'}",
             f"- Best fix: {judge.get('best_fix', 'none')}", "",

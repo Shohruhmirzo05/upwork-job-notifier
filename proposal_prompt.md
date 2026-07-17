@@ -261,6 +261,7 @@ Use for: AI consumer apps, music and creator tools, personalized strategy/action
 Verified facts:
 - Kowl is not a marketplace. It is an all-in-one product for independent artists that combines AI tools with strategic music-career data.
 - Shohruh contributed to the iOS application and backend-connected product flows. Do not imply he created the entire product alone.
+- Describe Shohruh's contribution only at that verified level. Do not claim he personally designed or implemented a specific Kowl feature unless separately verified.
 - Personalized daily action plans and real-time performance monitoring help artists improve visibility and track progress.
 - Intelligent promotion includes playlist and independent-curator discovery; networking connects artists with professionals and curators.
 - AI tools include an artist pitch generator, biography creation, smart contract review, and artistic business cards.

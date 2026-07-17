@@ -1,4 +1,5 @@
 import './styles.css';
+import '@phosphor-icons/web/regular';
 
 type Tab = 'inbox' | 'applications' | 'stats';
 type Status = 'new' | 'generated' | 'applied' | 'viewed' | 'replied' | 'interview' | 'won' | 'lost' | 'skipped';
@@ -87,7 +88,7 @@ function renderLogin(): void {
   root.innerHTML = `
     <main class="login-shell">
       <section class="login-card">
-        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div class="brand-mark" aria-hidden="true"><i class="ph ph-chart-line-up"></i></div>
         <p class="eyebrow">FERA TECH · PRIVATE WORKSPACE</p>
         <h1>Proposal Radar</h1>
         <p class="login-copy">One quiet place for every opportunity, proposal, reply, and win.</p>
@@ -125,7 +126,7 @@ function shell(content: string): string {
   return `
     <div class="app-shell">
       <aside class="sidebar">
-        <div class="brand"><div class="brand-mark small"><span></span><span></span><span></span></div><div><strong>Proposal Radar</strong><small>FERA TECH</small></div></div>
+        <div class="brand"><div class="brand-mark small"><i class="ph ph-chart-line-up"></i></div><div><strong>Proposal Radar</strong><small>FERA TECH</small></div></div>
         <nav>
           ${nav('inbox', inboxIcon, 'Job inbox')}
           ${nav('applications', applicationsIcon, 'Applications')}
@@ -143,9 +144,9 @@ function shell(content: string): string {
     </div>`;
 }
 
-const inboxIcon = '<svg viewBox="0 0 24 24"><path d="M4 4h16v14H4zM4 13h4l2 2h4l2-2h4"/></svg>';
-const applicationsIcon = '<svg viewBox="0 0 24 24"><path d="M8 4h8M9 3h6v3H9zM6 5H4v16h16V5h-2M8 11h8M8 15h6"/></svg>';
-const statsIcon = '<svg viewBox="0 0 24 24"><path d="M4 20V10h4v10M10 20V4h4v16M16 20v-7h4v7"/></svg>';
+const inboxIcon = '<i class="ph ph-inbox"></i>';
+const applicationsIcon = '<i class="ph ph-clipboard-text"></i>';
+const statsIcon = '<i class="ph ph-chart-bar"></i>';
 
 function bindShell(): void {
   document.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach(button => button.addEventListener('click', () => {
@@ -187,7 +188,7 @@ function jobCard(job: Job): string {
       <div class="chips">${chips.map(chip => `<span>${esc(chip)}</span>`).join('')}</div>
       ${job.status === 'generated' ? `<div class="quick-actions"><button data-action="apply" data-cipher="${esc(job.cipher)}">Confirm applied</button><button class="quiet" data-action="skip" data-cipher="${esc(job.cipher)}">Didn't apply</button></div>` : ''}
       ${job.tags?.length ? `<div class="card-tags">${job.tags.map(tag => `<span>#${esc(tag)}</span>`).join('')}</div>` : ''}
-      <span class="card-arrow">›</span>
+      <span class="card-arrow"><i class="ph ph-caret-right"></i></span>
     </article>`;
 }
 
@@ -199,9 +200,9 @@ function renderJobs(): void {
       <div class="header-stat"><strong>${jobs.length}</strong><span>${isApps ? 'in pipeline' : 'waiting'}</span></div>
     </header>
     <section class="search-wrap">
-      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></svg>
+      <i class="ph ph-magnifying-glass" aria-hidden="true"></i>
       <input id="search" type="search" value="${esc(query)}" placeholder="Search title, ID, proposal — or paste a Telegram message" autocomplete="off">
-      ${query ? '<button id="clear-search" aria-label="Clear search">×</button>' : ''}
+      ${query ? '<button id="clear-search" aria-label="Clear search"><i class="ph ph-x"></i></button>' : ''}
     </section>
     <section class="list-head"><span>${isApps ? 'Your pipeline' : 'Latest matches'}</span><button id="refresh">Refresh</button></section>
     <section class="job-list ${loading ? 'is-loading' : ''}">
@@ -268,21 +269,23 @@ function renderDrawer(job: Job, events: Array<Record<string, string>>): void {
   layer.innerHTML = `
     <div class="drawer-backdrop" data-close></div>
     <aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
-      <div class="drawer-handle"></div>
-      <button class="drawer-close" data-close aria-label="Close">×</button>
-      <div class="drawer-title-row"><span class="status status-${esc(job.status)}"><i></i>${esc(statusLabel[job.status])}</span><span>${esc(timeAgo(job.publish_time || job.updated_at))}</span></div>
-      <h2 id="drawer-title">${esc(job.title)}</h2>
-      <div class="drawer-meta"><strong>${esc(job.budget || 'Budget not listed')}</strong><span>Match ${esc(job.score || '—')}</span><span>${esc(job.tier || '')}</span></div>
-      <div class="status-actions">${statuses.filter(value => value !== job.status).map(value => `<button data-status="${value}" class="${value === 'applied' || value === 'won' ? 'primary' : ''}">${esc(statusLabel[value])}</button>`).join('')}</div>
-      ${job.link ? `<a class="upwork-link" href="${esc(job.link)}" target="_blank" rel="noopener">Open on Upwork <span>↗</span></a>` : ''}
-      <section class="drawer-section"><div class="section-title"><h3>Job brief</h3></div><p class="description">${esc(job.description || 'No description stored.')}</p><div class="chips">${(job.skills ?? []).map(skill => `<span>${esc(skill)}</span>`).join('')}</div></section>
-      ${job.proposal ? `<section class="drawer-section proposal"><div class="section-title"><h3>Proposal</h3><div><span class="hook">${esc(job.hook_type)}</span><button class="copy" data-copy="${esc(job.proposal)}">Copy</button></div></div><pre>${esc(job.proposal)}</pre></section>` : ''}
-      ${screening ? `<section class="drawer-section"><div class="section-title"><h3>Screening answers</h3></div>${screening}</section>` : ''}
-      <section class="drawer-section"><div class="section-title"><h3>Notes & labels</h3><button id="save-details" class="save">Save</button></div><label class="field-label" for="tags">Labels <small>comma-separated</small></label><input id="tags" value="${esc((job.tags ?? []).join(', '))}" placeholder="high-value, follow-up"><label class="field-label" for="notes">Notes</label><textarea id="notes" placeholder="Client context, follow-up date, conversation notes…">${esc(job.notes || '')}</textarea></section>
-      ${events.length ? `<section class="drawer-section timeline"><div class="section-title"><h3>History</h3></div>${events.slice(0, 8).map(event => `<div><i></i><p><strong>${esc(event.event_type?.replaceAll('_', ' '))}</strong><span>${event.from_status && event.to_status && event.from_status !== event.to_status ? `${esc(event.from_status)} → ${esc(event.to_status)}` : ''}</span></p><time>${esc(timeAgo(event.created_at))}</time></div>`).join('')}</section>` : ''}
-      <div class="drawer-safe"></div>
+      <div class="drawer-topbar"><div class="drawer-handle"></div><button class="drawer-close" data-close aria-label="Close"><i class="ph ph-x"></i></button></div>
+      <div class="drawer-scroll">
+        <div class="drawer-title-row"><span class="status status-${esc(job.status)}"><i></i>${esc(statusLabel[job.status])}</span><span>${esc(timeAgo(job.publish_time || job.updated_at))}</span></div>
+        <h2 id="drawer-title">${esc(job.title)}</h2>
+        <div class="drawer-meta"><strong>${esc(job.budget || 'Budget not listed')}</strong><span>Match ${esc(job.score || '—')}</span><span>${esc(job.tier || '')}</span></div>
+        <div class="status-actions">${statuses.filter(value => value !== job.status).map(value => `<button data-status="${value}" class="${value === 'applied' || value === 'won' ? 'primary' : ''}">${esc(statusLabel[value])}</button>`).join('')}</div>
+        ${job.link ? `<a class="upwork-link" href="${esc(job.link)}" target="_blank" rel="noopener">Open on Upwork <i class="ph ph-arrow-up-right"></i></a>` : ''}
+        <section class="drawer-section"><div class="section-title"><h3>Job brief</h3></div><p class="description">${esc(job.description || 'No description stored.')}</p><div class="chips">${(job.skills ?? []).map(skill => `<span>${esc(skill)}</span>`).join('')}</div></section>
+        ${job.proposal ? `<section class="drawer-section proposal"><div class="section-title"><h3>Proposal</h3><div><span class="hook">${esc(job.hook_type)}</span><button class="copy" data-copy="${esc(job.proposal)}">Copy</button></div></div><pre>${esc(job.proposal)}</pre></section>` : ''}
+        ${screening ? `<section class="drawer-section"><div class="section-title"><h3>Screening answers</h3></div>${screening}</section>` : ''}
+        <section class="drawer-section"><div class="section-title"><h3>Notes & labels</h3><button id="save-details" class="save">Save</button></div><label class="field-label" for="tags">Labels <small>comma-separated</small></label><input id="tags" value="${esc((job.tags ?? []).join(', '))}" placeholder="high-value, follow-up"><label class="field-label" for="notes">Notes</label><textarea id="notes" placeholder="Client context, follow-up date, conversation notes…">${esc(job.notes || '')}</textarea></section>
+        ${events.length ? `<section class="drawer-section timeline"><div class="section-title"><h3>History</h3></div>${events.slice(0, 8).map(event => `<div><i></i><p><strong>${esc(event.event_type?.replaceAll('_', ' '))}</strong><span>${event.from_status && event.to_status && event.from_status !== event.to_status ? `${esc(event.from_status)} → ${esc(event.to_status)}` : ''}</span></p><time>${esc(timeAgo(event.created_at))}</time></div>`).join('')}</section>` : ''}
+        <div class="drawer-safe"></div>
+      </div>
     </aside>`;
   document.body.appendChild(layer);
+  layer.querySelector<HTMLElement>('.drawer-scroll')!.scrollTop = 0;
   requestAnimationFrame(() => layer.classList.add('open'));
   layer.querySelectorAll('[data-close]').forEach(el => el.addEventListener('click', () => closeDrawer(layer)));
   layer.querySelectorAll<HTMLButtonElement>('[data-status]').forEach(button => button.addEventListener('click', () => void setStatus(job.cipher, button.dataset.status as Status)));
@@ -338,7 +341,7 @@ function renderStats(data: Stats): void {
         ${data.hooks.length ? `<div class="hook-table"><div class="hook-row head"><span>Opening style</span><span>Sent</span><span>Reply</span><span>Interview</span></div>${data.hooks.map(hook => `<div class="hook-row"><strong>${esc(hook.hook_type)}</strong><span>${hook.applied}</span><span>${rate(Number(hook.replied), Number(hook.applied))}</span><span>${rate(Number(hook.interview), Number(hook.applied))}</span></div>`).join('')}</div>` : '<div class="empty mini"><p>Confirm a few applications to begin comparing hook styles.</p></div>'}
       </article>
     </section>
-    <section class="insight"><div>✦</div><p><strong>Your next useful signal</strong><span>${applied < 10 ? `Track ${10 - applied} more confirmed application${10 - applied === 1 ? '' : 's'} before judging a hook. Small samples are noisy.` : 'Prioritize the hook with the strongest interview rate, then keep testing against one alternative.'}</span></p></section>
+    <section class="insight"><div><i class="ph ph-lightbulb"></i></div><p><strong>Your next useful signal</strong><span>${applied < 10 ? `Track ${10 - applied} more confirmed application${10 - applied === 1 ? '' : 's'} before judging a hook. Small samples are noisy.` : 'Prioritize the hook with the strongest interview rate, then keep testing against one alternative.'}</span></p></section>
   `);
   bindShell();
 }

@@ -22,3 +22,6 @@ tracker/node_modules/
 tracker/dist/
 tracker/.wrangler/
 .tracker-credentials
+
+# local Product Design QA captures (report stays versioned)
+tracker/design-qa-*.png

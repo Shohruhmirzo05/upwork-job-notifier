@@ -36,6 +36,13 @@ GENERIC_OPENERS = (
     "i would love the opportunity", "i am the perfect fit", "i'm the perfect fit",
 )
 
+SELF_DISQUALIFYING = (
+    r"\bI have not\b", r"\bI haven't\b", r"\bI do not have\b", r"\bI don't have\b",
+    r"\bI lack\b", r"\bI have never\b", r"\bno direct experience\b",
+    r"\b(?:this|that|it) would be (?:a )?new\b",
+    r"\b(?:would|will) be (?:a )?new (?:integration|framework|tool|stack|platform)\b",
+)
+
 
 def _category(job):
     text = " ".join((job.get("title", ""), job.get("description", ""),
@@ -114,6 +121,8 @@ def deterministic_audit(job, cover):
     overlap = sorted(term for term in title_terms | skill_terms if term in preview_lower)
     generic = [phrase for phrase in GENERIC_OPENERS if preview_lower.startswith(phrase)]
     link_in_preview = "http" in preview_lower
+    self_disqualifying = [pattern for pattern in SELF_DISQUALIFYING
+                          if re.search(pattern, cover or "", re.I)]
 
     score = 0
     score += 14 if not generic else 0
@@ -127,6 +136,7 @@ def deterministic_audit(job, cover):
     score += 14 if 80 <= len(words) <= 300 else (7 if 60 <= len(words) <= 350 else 0)
     score += 7 if len(questions) <= 1 else 2
     score += 8 if "perfect fit" not in (cover or "").lower() and "guarantee" not in (cover or "").lower() else 0
+    score -= 20 if self_disqualifying else 0
 
     flags = []
     if generic:
@@ -143,9 +153,11 @@ def deterministic_audit(job, cover):
         flags.append(f"length outside preferred range: {len(words)} words")
     if len(questions) > 1:
         flags.append("more than one CTA question")
+    if self_disqualifying:
+        flags.append("self-disqualifying capability-gap language")
 
     return {
-        "score": min(100, score),
+        "score": max(0, min(100, score)),
         "word_count": len(words),
         "preview": preview,
         "preview_job_terms": overlap,
@@ -179,6 +191,7 @@ Research-backed rubric:
 - Be concise and scannable, normally 140-220 words and no more than 300 for complex work.
 - Use a single low-effort question only when its answer changes scope, architecture, cost, or timing.
 - Penalize fake certainty, invented diagnosis, vague claims, keyword stuffing, and any mismatch between proof and job.
+- Penalize self-disqualifying capability inventories such as "I have not used X", "I don't have Y", or "this integration would be new". Truthful distinctions should lead with the closest verified production proof, then state the relevant implementation plan without claiming unsupported experience.
 
 Score preview, specificity, proof, execution_plan, credibility, brevity, and cta from 0-5. Give a total from 0-100. A passing proposal needs total >= 80, preview >= 4, specificity >= 4, credibility >= 4, and no critical issue. Be demanding. Return JSON only:
 {"evaluations":[{"id":"1","total":0,"preview":0,"specificity":0,"proof":0,"execution_plan":0,"credibility":0,"brevity":0,"cta":0,"verdict":"pass|revise","issues":["..."],"best_fix":"..."}]}

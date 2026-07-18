@@ -726,30 +726,44 @@ def generate_proposal(job):
     use_json = bool(template)
     prompt = _fill_prompt(job, template) if template else _fallback_prompt(job)
     raw = _generate(prompt, json_mode=use_json)
-    failures = _proposal_hard_failures(raw)
-    if not failures:
-        return raw
+    for repair_attempt in range(2):
+        failures = _proposal_hard_failures(raw)
+        if not failures:
+            return raw
 
-    # Prompt instructions are not always followed consistently. One focused repair pass
-    # prevents a generic or structurally weak draft from ever reaching Telegram.
-    print(f"[info] proposal QA retry: {', '.join(failures)}", file=sys.stderr)
-    repair = (
-        f"{prompt}\n\n"
-        "A first draft failed mandatory quality checks. Rewrite it from scratch, not sentence "
-        "by sentence. Keep every factual and output-format rule from the original brief.\n"
-        f"FAILED CHECKS: {'; '.join(failures)}\n"
-        "HARD REPAIR RULES:\n"
-        "- After 'Hi,' begin with the specific technical risk, first milestone, business outcome, "
-        "or a named shipped proof. Never begin with 'I can', 'I understand', 'I would', 'I'm', "
-        "'I am', or another self-introduction.\n"
-        "- Use one close portfolio project by default and at most two.\n"
-        "- Keep all portfolio links below the preview paragraph.\n"
-        "- Keep a normal proposal between 140 and 210 words, and a complex proposal below 260.\n"
-        "- Do not infer unverified features, tools, ownership, or specialist experience.\n"
-        "- Use no more than one precise closing question.\n\n"
-        f"REJECTED FIRST DRAFT:\n{raw or '(empty)'}"
-    )
-    return _generate(repair, json_mode=use_json)
+        # Models do not follow long proposal briefs consistently. Validate every repaired
+        # draft too, so a self-disqualifying or structurally weak rewrite never reaches Telegram.
+        print(f"[info] proposal QA retry {repair_attempt + 1}: {', '.join(failures)}",
+              file=sys.stderr)
+        repair = (
+            f"{prompt}\n\n"
+            "A draft failed mandatory quality checks. Rewrite it from scratch, not sentence "
+            "by sentence. Keep every factual and output-format rule from the original brief.\n"
+            f"FAILED CHECKS: {'; '.join(failures)}\n"
+            "HARD REPAIR RULES:\n"
+            "- After 'Hi,' begin with the specific technical risk, first milestone, business outcome, "
+            "or a named shipped proof. Never begin with 'I can', 'I understand', 'I would', 'I'm', "
+            "'I am', or another self-introduction.\n"
+            "- Use one close portfolio project by default and at most two.\n"
+            "- Keep all portfolio links below the preview paragraph.\n"
+            "- Keep a normal proposal between 140 and 210 words, and a complex proposal below 260.\n"
+            "- Do not infer unverified features, tools, ownership, or specialist experience.\n"
+            "- Never use self-disqualifying phrases such as 'I have not', 'I haven't', 'I don't "
+            "have', 'I lack', 'no direct experience', or 'this would be new'. Lead with the closest "
+            "verified production proof and frame any necessary distinction neutrally.\n"
+            "- For an unverified framework or API, describe the verified adjacent architecture and "
+            "the proposed implementation or validation plan. Do not inventory missing experience.\n"
+            "- Use no more than one precise closing question.\n\n"
+            f"REJECTED DRAFT:\n{raw or '(empty)'}"
+        )
+        raw = _generate(repair, json_mode=use_json)
+
+    final_failures = _proposal_hard_failures(raw)
+    if final_failures:
+        print(f"[error] proposal rejected after QA: {', '.join(final_failures)}",
+              file=sys.stderr)
+        return None
+    return raw
 
 
 def _proposal_hard_failures(raw):
@@ -787,6 +801,16 @@ def _proposal_hard_failures(raw):
     if len(projects) > 2:
         failures.append(f"uses {len(projects)} portfolio projects")
 
+    self_disqualifying = (
+        r"\bI have not\b", r"\bI haven't\b", r"\bI do not have\b", r"\bI don't have\b",
+        r"\bI lack\b", r"\bI have never\b", r"\bI have not personally\b",
+        r"\bI haven't personally\b", r"\bno direct experience\b",
+        r"\b(?:this|that|it) would be (?:a )?new\b",
+        r"\b(?:would|will) be (?:a )?new (?:integration|framework|tool|stack|platform)\b",
+    )
+    if any(re.search(pattern, cover, re.I) for pattern in self_disqualifying):
+        failures.append("uses self-disqualifying capability-gap language")
+
     # Launchcast is verified as a live iOS publishing/notification product, not as a
     # maps case study. This catches the specific unsupported inference seen in live QA.
     if "launchcast" in cover.lower() and re.search(
@@ -823,7 +847,10 @@ def generate_answers(job, questions):
         "of the question. Each answer must be 2-4 concise sentences in first person. Include one "
         "relevant example, result, or implementation fact when useful. Reuse only verified projects, "
         "links, rate and claims from the proposal/profile, but do not copy the proposal opening or "
-        "repeat the same proof mechanically across answers.\n"
+        "repeat the same proof mechanically across answers. Never volunteer self-disqualifying "
+        "phrases such as 'I have not', 'I don't have', 'I lack', or 'this would be new'. If an exact "
+        "requested tool is not verified, lead with the closest production proof, state the distinction "
+        "neutrally, and explain the relevant implementation plan without inventing experience.\n"
         "WRITING STYLE — very important: write like a human typing naturally. Plain text only. "
         "Use straight apostrophes ('), never curly/smart quotes. NEVER use em-dashes or en-dashes "
         "(use a comma or a new sentence). No markdown, no bold, no asterisks, no emojis, no "

@@ -975,6 +975,11 @@ def format_proposal_messages(raw):
             if a:
                 lines.append(a)
         msgs += _chunk("\n".join(lines))
+
+    # Private decision support is deliberately separate from paste-ready client copy.
+    warning = _clean_text((data.get("fit_warning") or "").strip())
+    if warning:
+        msgs += _chunk(f"⚠️ Private fit warning (do not paste):\n{warning}")
     return msgs
 
 

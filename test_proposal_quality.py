@@ -44,6 +44,21 @@ class ProposalQualityTests(unittest.TestCase):
             notifier._proposal_hard_failures(draft(cover)),
         )
 
+    def test_private_fit_warning_is_not_mixed_into_cover_letter(self):
+        raw = json.dumps({
+            "hook_type": "proof-led",
+            "cover_letter": "Hi,\n\nLaunchcast proves end-to-end iOS release ownership.",
+            "fit_warning": (
+                "The client explicitly requires published Capacitor or Ionic examples; the "
+                "verified portfolio currently proves native iOS and Flutter releases."
+            ),
+        })
+        messages = notifier.format_proposal_messages(raw)
+
+        self.assertEqual(messages[0], "Hi,\n\nLaunchcast proves end-to-end iOS release ownership.")
+        self.assertIn("Private fit warning", messages[1])
+        self.assertNotIn("Capacitor", messages[0])
+
     @patch("notifier._generate")
     def test_repaired_draft_is_validated_before_return(self, generate):
         weak = draft("Hi,\n\nI have not used MCP, but I can implement it.")

@@ -55,6 +55,7 @@ CAPABILITY FIT GATE:
 - For an unverified named orchestration framework, describe the verified agent architecture experience and recommend the framework only as the proposed implementation. Do not enumerate frameworks Shohruh has not shipped.
 - For an unverified named API, list the closest verified integrations, then explain the first integration milestone (sandbox access, OAuth/scopes, rate limits, webhooks, idempotency, and failure recovery as relevant). Do not label the client's requested API as "new" or focus on its absence.
 - Do not use a specialist title for an unsupported discipline or platform.
+- If the client makes exact prior proof a central selection condition (for example, links to published Capacitor apps) and the verified profile does not contain it, do not hide the mismatch or repeatedly weaken the cover letter with it. Write the strongest truthful adjacent proposal and put one concise sentence in the private `fit_warning` field explaining the missing central proof. Keep the warning factual and decision-oriented so Shohruh can decide whether to spend Connects.
 - For design-only jobs that require Figma case studies, do not present App Store development links as a design portfolio. Explain that they demonstrate implemented product UI only, unless a verified design case study is available.
 - For FlutterFlow jobs, do not imply that Flutter codebase experience proves FlutterFlow delivery. State the distinction if applying because implementation, Firebase, paywall, QA, or release experience is still relevant.
 - If the job's central deliverable has no credible direct or adjacent proof, keep the response transparent and minimal. Never compensate with confident wording.
@@ -414,7 +415,8 @@ Return valid JSON only, nothing else:
 
 {
   "hook_type": "one of: proof-led, diagnostic, plan-led, outcome-led",
-  "cover_letter": "the complete paste-ready cover letter, ending with Best regards, Shohruh Alijonov, and a relevant title"
+  "cover_letter": "the complete paste-ready cover letter, ending with Best regards, Shohruh Alijonov, and a relevant title",
+  "fit_warning": "empty string unless the client requires central proof that is not verified; this is private and never part of the cover letter"
 }
 
 If, and only if, {{QUESTIONS}} contains real Upwork screening questions, add:
@@ -422,6 +424,7 @@ If, and only if, {{QUESTIONS}} contains real Upwork screening questions, add:
 {
   "hook_type": "one of: proof-led, diagnostic, plan-led, outcome-led",
   "cover_letter": "...",
+  "fit_warning": "",
   "screening_answers": [
     {"question": "the client's first question", "answer": "direct first-person answer"}
   ]

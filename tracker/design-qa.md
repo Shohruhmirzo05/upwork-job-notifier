@@ -8,6 +8,9 @@
 - Simplified card controls capture: `design-qa-status-mobile.png`
 - Simplified status drawer capture: `design-qa-status-drawer-mobile.png`
 - Combined source/implementation comparison: `design-qa-comparison.png`
+- Timeline analytics before capture: `design-qa-timeline-before.png`
+- Timeline analytics accepted capture: `design-qa-timeline-desktop.png`
+- Timeline analytics comparison: `design-qa-timeline-comparison.png`
 - Primary viewport: 390 × 844
 - Secondary viewport: 1440 × 900
 - State: authenticated job inbox and open job-details drawer
@@ -61,6 +64,22 @@ No actionable P0/P1/P2 issues remain.
 - [P2] The former controls were too small and crowded for confident mobile use.
   - Fix: use 46px card controls and 58px drawer targets on mobile, with Phosphor icons and explicit labels.
   - Post-fix checks: 390 × 844 rendered with `scrollWidth = innerWidth`, the top section remained visible, the temporary QA record was removed after testing, and the browser console contained no errors.
+
+### Timeline, automatic application, and search iteration
+
+1. [P1] Performance data was all-time only, so recent changes and month-over-month results could not be evaluated.
+   - Fix: add a persistent timeline control with Last 30 days, the current four calendar months, the current year, All time, and an inclusive custom date range.
+   - Evidence: the accepted live DOM exposes Last 30 days, July 2026, June 2026, May 2026, April 2026, 2026, All time, and Custom. Selecting May changed the live funnel from 17 July-period applications to 0 May applications and updated every rate and hook table from the same range.
+   - Visual evidence: `design-qa-timeline-comparison.png` places the pre-change all-time view beside the accepted timeline view.
+2. [P1] Proposal generation required a redundant confirmation even though generation means the application was sent in the normal workflow.
+   - Fix: proposal generation now records Applied, sets the application timestamp, and includes it in analytics immediately. Didn't apply remains the explicit correction path and removes the record from performance calculations.
+   - Evidence: a disposable local job moved New → Applied on proposal generation, appeared in July analytics, then moved to Didn't apply and disappeared from the same range. No production job data was changed for this test.
+3. [P1] Multi-word search required all tokens and only covered a subset of stored fields.
+   - Fix: search is now global across tabs, Unicode-aware, any-token matching, relevance-ranked, and covers title, brief, skills, matched terms, proposal, screening answers, budget, link, ID, tier, hook, status, labels, and notes.
+   - Evidence: the deployed search `Airbridge completely-unrelated` returned the single Airbridge job despite the second token not matching. A disposable local record was also found from both its description and Cloudflare skill field while searching from the inbox tab after it had moved to Didn't apply.
+4. [P2] Timeline controls needed to remain usable on narrow screens without turning the header into a large form.
+   - Fix: presets use one horizontally scrollable 42px control row on mobile; custom dates expand only when selected and use full-width native date inputs plus one Apply action.
+   - Evidence limit: the accepted in-app Browser capture was desktop-width. Mobile behavior was verified from the responsive CSS and semantic DOM, but this iteration does not include a fresh physical-iPhone screenshot.
 
 ## Follow-up polish
 

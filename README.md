@@ -92,8 +92,8 @@ Variables (simple comma lists).
 
 - **Job inbox:** every matching job actually sent to Telegram, with compact cards and full
   details in a tap-open drawer/bottom sheet.
-- **Applications:** generating a proposal moves the job here as **Likely applied**. Confirm it
-  with one tap, or mark **Didn't apply** so it never pollutes conversion stats.
+- **Applications:** generating a proposal automatically records the job as **Applied**. If you did
+  not send it, use **Didn't apply** so the job never pollutes conversion stats.
 - **Pipeline:** Applied → Viewed → Replied → Interview → Won/Lost, with an immutable event
   history, notes, and labels.
 - **Search:** title, description, Upwork cipher/link, proposal, or labels. Pasting the complete

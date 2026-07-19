@@ -31,6 +31,14 @@ interface Stats {
   funnel: Record<string, number>;
   hooks: Array<Record<string, string | number>>;
   weekly: Array<Record<string, string | number>>;
+  range: { from: string | null; to: string | null };
+}
+
+interface AnalyticsRange {
+  key: string;
+  label: string;
+  from: string | null;
+  to: string | null;
 }
 
 const root = document.querySelector<HTMLDivElement>('#app')!;
@@ -41,9 +49,11 @@ let authenticated = false;
 let query = '';
 let loading = false;
 let debounce = 0;
+let analyticsRangeKey = 'last30';
+let customRange = { from: '', to: '' };
 
 const statusLabel: Record<Status, string> = {
-  new: 'New', generated: 'Likely applied', applied: 'Applied', viewed: 'Viewed', replied: 'Replied',
+  new: 'New', generated: 'Applied', applied: 'Applied', viewed: 'Viewed', replied: 'Replied',
   interview: 'Interview', won: 'Won', lost: 'Lost', skipped: "Didn't apply",
 };
 
@@ -67,7 +77,7 @@ const selectableStatuses: Array<{ value: Status; label: string }> = [
 function nextStatus(job: Job): { value: Status; label: string; icon: string } | null {
   const next: Partial<Record<Status, { value: Status; label: string; icon: string }>> = {
     new: { value: 'applied', label: 'Mark applied', icon: 'ph-paper-plane-tilt' },
-    generated: { value: 'applied', label: 'Confirm applied', icon: 'ph-paper-plane-tilt' },
+    generated: { value: 'viewed', label: 'Client viewed', icon: 'ph-eye' },
     applied: { value: 'viewed', label: 'Client viewed', icon: 'ph-eye' },
     viewed: { value: 'replied', label: 'Mark replied', icon: 'ph-chat-circle-dots' },
     replied: { value: 'interview', label: 'Got interview', icon: 'ph-video-camera' },
@@ -89,6 +99,63 @@ function timeAgo(value?: string): string {
   if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
   if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
   return new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function isoDate(value: Date): string {
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+}
+
+function monthRange(offset: number): AnalyticsRange {
+  const now = new Date();
+  const first = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+  const last = new Date(now.getFullYear(), now.getMonth() + offset + 1, 0);
+  return {
+    key: `month:${first.getFullYear()}-${String(first.getMonth() + 1).padStart(2, '0')}`,
+    label: first.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }),
+    from: isoDate(first),
+    to: isoDate(last),
+  };
+}
+
+function analyticsRanges(): AnalyticsRange[] {
+  const today = new Date();
+  const thirtyDaysAgo = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 29);
+  const year = today.getFullYear();
+  return [
+    { key: 'last30', label: 'Last 30 days', from: isoDate(thirtyDaysAgo), to: isoDate(today) },
+    ...Array.from({ length: 4 }, (_, index) => monthRange(-index)),
+    { key: `year:${year}`, label: String(year), from: `${year}-01-01`, to: `${year}-12-31` },
+    { key: 'all', label: 'All time', from: null, to: null },
+    { key: 'custom', label: 'Custom', from: customRange.from || null, to: customRange.to || null },
+  ];
+}
+
+function activeAnalyticsRange(): AnalyticsRange {
+  return analyticsRanges().find(range => range.key === analyticsRangeKey) ?? analyticsRanges()[0];
+}
+
+function analyticsRangeLabel(range: AnalyticsRange): string {
+  if (range.key !== 'custom' || !range.from || !range.to) return range.label;
+  const from = new Date(`${range.from}T00:00:00`);
+  const to = new Date(`${range.to}T00:00:00`);
+  const sameYear = from.getFullYear() === to.getFullYear();
+  const start = from.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: sameYear ? undefined : 'numeric' });
+  const end = to.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  return `${start} – ${end}`;
+}
+
+function rememberAnalyticsRange(): void {
+  try {
+    localStorage.setItem('proposal-radar-analytics-range', JSON.stringify({ key: analyticsRangeKey, ...customRange }));
+  } catch { /* Preferences are optional. */ }
+}
+
+function restoreAnalyticsRange(): void {
+  try {
+    const saved = JSON.parse(localStorage.getItem('proposal-radar-analytics-range') || '{}') as { key?: string; from?: string; to?: string };
+    if (saved.key) analyticsRangeKey = saved.key;
+    customRange = { from: saved.from || '', to: saved.to || '' };
+  } catch { /* Use the default range. */ }
 }
 
 async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -243,10 +310,10 @@ function renderJobs(): void {
     </header>
     <section class="search-wrap">
       <i class="ph ph-magnifying-glass" aria-hidden="true"></i>
-      <input id="search" type="search" value="${esc(query)}" placeholder="Search title, ID, proposal — or paste a Telegram message" autocomplete="off">
+      <input id="search" type="search" value="${esc(query)}" placeholder="Search any word in title, brief, skills, proposal, notes, or Telegram message" autocomplete="off">
       ${query ? '<button id="clear-search" aria-label="Clear search"><i class="ph ph-x"></i></button>' : ''}
     </section>
-    <section class="list-head"><span>${isApps ? 'Your pipeline' : 'Latest matches'}</span><button id="refresh">Refresh</button></section>
+    <section class="list-head"><span>${query ? `${jobs.length} match${jobs.length === 1 ? '' : 'es'}` : isApps ? 'Your pipeline' : 'Latest matches'}</span><button id="refresh">Refresh</button></section>
     <section class="job-list ${loading ? 'is-loading' : ''}">
       ${loading ? skeletons() : jobs.length ? jobs.map(jobCard).join('') : emptyState(isApps)}
     </section>
@@ -284,7 +351,7 @@ function skeletons(): string {
 }
 
 function emptyState(applications: boolean): string {
-  return `<div class="empty"><div>${applications ? applicationsIcon : inboxIcon}</div><h3>${query ? 'No matching jobs' : applications ? 'No applications yet' : 'Inbox is clear'}</h3><p>${query ? 'Try fewer words or paste the complete Upwork job link.' : applications ? 'Generated proposals appear here automatically.' : 'New Telegram matches will land here automatically.'}</p></div>`;
+  return `<div class="empty"><div>${applications ? applicationsIcon : inboxIcon}</div><h3>${query ? 'No matching jobs' : applications ? 'No applications yet' : 'Inbox is clear'}</h3><p>${query ? 'Try another word from the title, brief, proposal, notes, or paste the Upwork link.' : applications ? 'Generated proposals are recorded as applied automatically.' : 'New Telegram matches will land here automatically.'}</p></div>`;
 }
 
 async function setStatus(cipher: string, status: Status): Promise<void> {
@@ -366,7 +433,11 @@ function closeDrawer(layer: Element): void {
 async function loadStats(): Promise<void> {
   root.innerHTML = shell('<div class="stats-loading">Loading performance…</div>'); bindShell();
   try {
-    const data = await api<Stats>('/api/stats'); renderStats(data);
+    const range = activeAnalyticsRange();
+    const params = new URLSearchParams();
+    if (range.from) params.set('from', range.from);
+    if (range.to) params.set('to', range.to);
+    const data = await api<Stats>(`/api/stats${params.size ? `?${params}` : ''}`); renderStats(data);
   } catch (reason) { if (authenticated) toast(reason instanceof Error ? reason.message : 'Could not load stats'); }
 }
 
@@ -377,6 +448,9 @@ function rate(numerator: number, denominator: number): string {
 function renderStats(data: Stats): void {
   const f = data.funnel;
   const applied = Number(f.applied ?? 0);
+  const ranges = analyticsRanges();
+  const activeRange = activeAnalyticsRange();
+  const rangeLabel = analyticsRangeLabel(activeRange);
   const funnelItems = [
     ['Applied', applied], ['Viewed', Number(f.viewed ?? 0)], ['Replied', Number(f.replied ?? 0)],
     ['Interview', Number(f.interview ?? 0)], ['Won', Number(f.won ?? 0)],
@@ -384,26 +458,56 @@ function renderStats(data: Stats): void {
   const max = Math.max(applied, 1);
   root.innerHTML = shell(`
     <header class="page-header"><div><p class="eyebrow">FEEDBACK LOOP</p><h1>Performance</h1><p>Know which hooks earn replies—not which ones merely sound good.</p></div></header>
+    <section class="range-filter" aria-label="Analytics date range">
+      <div class="range-presets">
+        ${ranges.map(range => `<button class="${range.key === analyticsRangeKey ? 'active' : ''}" data-range="${esc(range.key)}">${esc(range.label)}</button>`).join('')}
+      </div>
+      ${analyticsRangeKey === 'custom' ? `<form class="custom-range" id="custom-range"><label>From<input type="date" name="from" value="${esc(customRange.from)}" required></label><span>to</span><label>To<input type="date" name="to" value="${esc(customRange.to)}" required></label><button type="submit">Apply range</button></form>` : ''}
+    </section>
     <section class="metric-grid">
-      <article><span>Confirmed applications</span><strong>${applied}</strong><small>${Number(data.totals.likely ?? 0)} still need confirmation</small></article>
+      <article><span>Applications</span><strong>${applied}</strong><small>${esc(rangeLabel)}</small></article>
       <article><span>Reply rate</span><strong>${rate(Number(f.replied ?? 0), applied)}</strong><small>${Number(f.replied ?? 0)} replies</small></article>
       <article><span>Interview rate</span><strong>${rate(Number(f.interview ?? 0), applied)}</strong><small>${Number(f.interview ?? 0)} interviews</small></article>
       <article class="win"><span>Win rate</span><strong>${rate(Number(f.won ?? 0), applied)}</strong><small>${Number(f.won ?? 0)} contracts won</small></article>
     </section>
     <section class="analytics-grid">
-      <article class="panel funnel"><div class="panel-head"><div><p class="eyebrow">CONVERSION</p><h2>Application funnel</h2></div><span>All time</span></div>
+      <article class="panel funnel"><div class="panel-head"><div><p class="eyebrow">CONVERSION</p><h2>Application funnel</h2></div><span>${esc(rangeLabel)}</span></div>
         <div class="funnel-list">${funnelItems.map(([label, value]) => `<div><span>${label}</span><div><i style="width:${Math.max(Number(value) / max * 100, Number(value) ? 5 : 0)}%"></i></div><strong>${value}</strong></div>`).join('')}</div>
       </article>
       <article class="panel hooks"><div class="panel-head"><div><p class="eyebrow">A/B SIGNAL</p><h2>Hook performance</h2></div></div>
-        ${data.hooks.length ? `<div class="hook-table"><div class="hook-row head"><span>Opening style</span><span>Sent</span><span>Reply</span><span>Interview</span></div>${data.hooks.map(hook => `<div class="hook-row"><strong>${esc(hook.hook_type)}</strong><span>${hook.applied}</span><span>${rate(Number(hook.replied), Number(hook.applied))}</span><span>${rate(Number(hook.interview), Number(hook.applied))}</span></div>`).join('')}</div>` : '<div class="empty mini"><p>Confirm a few applications to begin comparing hook styles.</p></div>'}
+        ${data.hooks.length ? `<div class="hook-table"><div class="hook-row head"><span>Opening style</span><span>Sent</span><span>Reply</span><span>Interview</span></div>${data.hooks.map(hook => `<div class="hook-row"><strong>${esc(hook.hook_type)}</strong><span>${hook.applied}</span><span>${rate(Number(hook.replied), Number(hook.applied))}</span><span>${rate(Number(hook.interview), Number(hook.applied))}</span></div>`).join('')}</div>` : '<div class="empty mini"><p>Track a few applications to begin comparing hook styles.</p></div>'}
       </article>
     </section>
-    <section class="insight"><div><i class="ph ph-lightbulb"></i></div><p><strong>Your next useful signal</strong><span>${applied < 10 ? `Track ${10 - applied} more confirmed application${10 - applied === 1 ? '' : 's'} before judging a hook. Small samples are noisy.` : 'Prioritize the hook with the strongest interview rate, then keep testing against one alternative.'}</span></p></section>
+    <section class="insight"><div><i class="ph ph-lightbulb"></i></div><p><strong>Your next useful signal</strong><span>${applied < 10 ? `Track ${10 - applied} more application${10 - applied === 1 ? '' : 's'} before judging a hook. Small samples are noisy.` : 'Prioritize the hook with the strongest interview rate, then keep testing against one alternative.'}</span></p></section>
   `);
   bindShell();
+  document.querySelectorAll<HTMLButtonElement>('[data-range]').forEach(button => button.addEventListener('click', () => {
+    analyticsRangeKey = button.dataset.range || 'last30';
+    if (analyticsRangeKey === 'custom') {
+      const currentMonth = monthRange(0);
+      if (!customRange.from) customRange.from = currentMonth.from || '';
+      if (!customRange.to) customRange.to = currentMonth.to || '';
+      rememberAnalyticsRange();
+      renderStats(data);
+      return;
+    }
+    rememberAnalyticsRange();
+    void loadStats();
+  }));
+  document.querySelector<HTMLFormElement>('#custom-range')?.addEventListener('submit', event => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget as HTMLFormElement);
+    const from = String(form.get('from') || '');
+    const to = String(form.get('to') || '');
+    if (!from || !to || from > to) { toast('Choose a valid start and end date'); return; }
+    customRange = { from, to };
+    rememberAnalyticsRange();
+    void loadStats();
+  });
 }
 
 async function boot(): Promise<void> {
+  restoreAnalyticsRange();
   try {
     const response = await fetch('/api/session');
     authenticated = response.ok;

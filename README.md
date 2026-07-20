@@ -157,6 +157,11 @@ python notifier.py
 ## Troubleshooting
 - **No `visitor_gql_token` cookie / 403:** direct IP blocked → add the Webshare proxy secret.
 - **401 from GraphQL:** token expired mid-run; the next cron run refreshes it automatically.
+- **OpenAI `insufficient_quota`:** API billing is separate from ChatGPT. Check the API
+  project's billing balance and usage limits, then replace `OPENAI_API_KEY` if needed.
+- **Secret was replaced but the bot still uses the old key:** push or manually dispatch the
+  workflow. Deploy/manual runs cancel the stale process; scheduled jobs reload secrets every
+  short cycle.
 - **Too many / too few pings:** adjust `min_score` and `search_queries` in `filters.json`.
 - **Schema drift:** if Upwork changes the GraphQL schema, `GRAPHQL_QUERY` in `notifier.py`
   is the one place to update.

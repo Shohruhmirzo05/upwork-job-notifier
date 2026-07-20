@@ -75,6 +75,7 @@ OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.5").strip()
 # low reasoning: enough for proposal writing, and stops reasoning tokens eating the output
 OPENAI_REASONING = os.environ.get("OPENAI_REASONING", "low").strip()
 AI_ENABLED = bool(GEMINI_API_KEY or OPENAI_API_KEY)
+_AI_FAILURES = []
 PROFILE_PATH = Path(os.environ.get("PROFILE_PATH", "profile.md"))
 PROMPT_PATH = Path(os.environ.get("PROMPT_PATH", "proposal_prompt.md"))
 
@@ -610,6 +611,38 @@ def _fallback_prompt(job):
     )
 
 
+def _record_ai_failure(provider, kind, detail=""):
+    """Keep safe, user-facing failure metadata without ever retaining credentials."""
+    _AI_FAILURES.append({"provider": provider, "kind": kind, "detail": detail[:160]})
+
+
+def _ai_failure_message(action="proposal"):
+    """Explain the real provider failure instead of blaming Gemini for every error."""
+    failures = list(reversed(_AI_FAILURES))
+    openai = next((x for x in failures if x["provider"] == "OpenAI"), None)
+    gemini = next((x for x in failures if x["provider"] == "Gemini"), None)
+    prefix = f"⚠️ Couldn't generate {action}. "
+    if openai:
+        kind = openai["kind"]
+        if kind == "insufficient_quota":
+            return prefix + ("OpenAI rejected the request because this API project's billing "
+                             "quota is unavailable. Check OpenAI Platform billing/limits, then retry.")
+        if kind == "rate_limit":
+            return prefix + "OpenAI is temporarily rate-limited. Wait a minute, then retry."
+        if kind == "auth":
+            return prefix + "OpenAI rejected the API key. Replace the OPENAI_API_KEY secret and restart the workflow."
+        if kind == "access":
+            return prefix + f"OpenAI cannot access model {OPENAI_MODEL}. Check OPENAI_MODEL and project access."
+        return prefix + "OpenAI is temporarily unavailable. Tap the button to retry."
+    if gemini:
+        if gemini["kind"] == "quota":
+            return prefix + "Gemini quota is exhausted and no working OpenAI fallback was available."
+        if gemini["kind"] == "auth":
+            return prefix + "Gemini rejected the API key and no working OpenAI fallback was available."
+        return prefix + "Gemini is unavailable and no working OpenAI fallback was available."
+    return prefix + "No AI provider returned a response. Tap the button to retry."
+
+
 def _gemini_generate(prompt, json_mode=False, max_tokens=8192):
     """One Gemini generation, walking the model fallback chain: on 429 (daily quota) move to
     the next model; on 503 (overload) retry once then move on. thinking disabled so long
@@ -634,11 +667,17 @@ def _gemini_generate(prompt, json_mode=False, max_tokens=8192):
                     text = "".join(p.get("text", "") for p in parts).strip()
                     if text:
                         return text
+                    _record_ai_failure("Gemini", "empty", model)
                     break  # empty -> try next model
                 if r.status_code == 429:  # daily quota for this model -> next model, no retry
+                    _record_ai_failure("Gemini", "quota", model)
                     print(f"[warn] gemini {model}: quota exhausted (429); trying next model",
                           file=sys.stderr)
                     break
+                if r.status_code in (401, 403):
+                    _record_ai_failure("Gemini", "auth" if r.status_code == 401 else "access", model)
+                else:
+                    _record_ai_failure("Gemini", "unavailable", f"{model}: HTTP {r.status_code}")
                 if r.status_code == 503 and attempt == 0:  # overloaded -> one quick retry
                     time.sleep(2)
                     continue
@@ -646,6 +685,7 @@ def _gemini_generate(prompt, json_mode=False, max_tokens=8192):
                       file=sys.stderr)
                 break
             except Exception as e:  # timeouts, transient network
+                _record_ai_failure("Gemini", "unavailable", type(e).__name__)
                 print(f"[warn] gemini {model} error: {e}", file=sys.stderr)
                 if attempt == 0:
                     time.sleep(2)
@@ -665,29 +705,69 @@ def _openai_generate(prompt, json_mode=False, max_tokens=8192):
         body["reasoning_effort"] = OPENAI_REASONING
     if json_mode:
         body["response_format"] = {"type": "json_object"}
-    try:
-        r = requests.post("https://api.openai.com/v1/chat/completions",
-                          headers={"Authorization": f"Bearer {OPENAI_API_KEY}",
-                                   "Content-Type": "application/json"},
-                          json=body, timeout=90)
-        if r.status_code == 200:
-            choices = r.json().get("choices") or [{}]
-            return (choices[0].get("message", {}).get("content") or "").strip() or None
-        print(f"[warn] openai HTTP {r.status_code}: {r.text[:200]}", file=sys.stderr)
-        return None
-    except Exception as e:
-        print(f"[warn] openai error: {e}", file=sys.stderr)
-        return None
+    for attempt in range(3):
+        try:
+            r = requests.post("https://api.openai.com/v1/chat/completions",
+                              headers={"Authorization": f"Bearer {OPENAI_API_KEY}",
+                                       "Content-Type": "application/json"},
+                              json=body, timeout=90)
+            if r.status_code == 200:
+                choices = r.json().get("choices") or [{}]
+                text = (choices[0].get("message", {}).get("content") or "").strip()
+                if text:
+                    return text
+                _record_ai_failure("OpenAI", "empty")
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+                    continue
+                return None
+
+            try:
+                error = r.json().get("error") or {}
+            except Exception:
+                error = {}
+            code = str(error.get("code") or "")
+            if r.status_code == 429:
+                kind = "insufficient_quota" if code == "insufficient_quota" else "rate_limit"
+                _record_ai_failure("OpenAI", kind, code)
+                print(f"[warn] openai HTTP 429 ({kind})", file=sys.stderr)
+                if kind == "rate_limit" and attempt < 2:
+                    time.sleep(2 ** attempt)
+                    continue
+                return None
+            if r.status_code == 401:
+                _record_ai_failure("OpenAI", "auth", code)
+            elif r.status_code == 403:
+                _record_ai_failure("OpenAI", "access", code)
+            else:
+                _record_ai_failure("OpenAI", "unavailable", f"HTTP {r.status_code}")
+            print(f"[warn] openai HTTP {r.status_code}: {r.text[:200]}", file=sys.stderr)
+            if r.status_code >= 500 and attempt < 2:
+                time.sleep(2 ** attempt)
+                continue
+            return None
+        except Exception as e:
+            _record_ai_failure("OpenAI", "unavailable", type(e).__name__)
+            print(f"[warn] openai error: {e}", file=sys.stderr)
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+                continue
+            return None
+    return None
 
 
 def _generate(prompt, json_mode=False, max_tokens=8192):
     """Free Gemini first; fall back to paid OpenAI only if Gemini is unavailable/exhausted."""
+    _AI_FAILURES.clear()
     text = _gemini_generate(prompt, json_mode=json_mode, max_tokens=max_tokens)
     if text:
         return text
     if OPENAI_API_KEY:
         print("[info] Gemini unavailable — falling back to OpenAI", file=sys.stderr)
-        return _openai_generate(prompt, json_mode=json_mode, max_tokens=max_tokens)
+        text = _openai_generate(prompt, json_mode=json_mode, max_tokens=max_tokens)
+        if text:
+            print("[info] OpenAI fallback succeeded", file=sys.stderr)
+        return text
     return None
 
 
@@ -726,6 +806,8 @@ def generate_proposal(job):
     use_json = bool(template)
     prompt = _fill_prompt(job, template) if template else _fallback_prompt(job)
     raw = _generate(prompt, json_mode=use_json)
+    if not raw:
+        return None
     for repair_attempt in range(2):
         failures = _proposal_hard_failures(raw)
         if not failures:
@@ -1066,8 +1148,7 @@ def _handle_callback(cq, store):
         print(f"[info] proposal requested: {job['title'][:60]!r}")
         raw = generate_proposal(job)
         if not raw:
-            tg_reply(chat_id, mid, "⚠️ Couldn't generate a proposal (check GEMINI_API_KEY / "
-                                   "model). Tap the button to retry.")
+            tg_reply(chat_id, mid, _ai_failure_message("a proposal"))
             return
         cover = _extract_cover(raw)
         if cover:
@@ -1128,7 +1209,7 @@ def _handle_message(msg, store):
     print(f"[info] answering questions for: {job['title'][:50]!r}")
     answers = generate_answers(job, text)
     if not answers:
-        tg_reply(chat_id, mid, "⚠️ Couldn't generate answers. Send the question again.")
+        tg_reply(chat_id, mid, _ai_failure_message("answers"))
         return
     # One message PER answer, replying to the proposal, so each is easy to copy-paste.
     # The answer sits in a <pre> block -> Telegram shows a one-tap Copy button on it.
@@ -1279,6 +1360,15 @@ def serve(cfg, proxy):
 
 # ---------- main ----------
 def main():
+    if "--check-openai" in sys.argv:
+        if not OPENAI_API_KEY:
+            sys.exit("[error] OPENAI_API_KEY is not configured")
+        _AI_FAILURES.clear()
+        result = _openai_generate("Reply with exactly: OK", max_tokens=256)
+        if not result:
+            sys.exit("[error] " + _ai_failure_message("the OpenAI smoke test"))
+        print(f"[ok] OpenAI API smoke test passed with model {OPENAI_MODEL}")
+        return
     if not BOT_TOKEN or not CHAT_ID:
         sys.exit("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID")
 

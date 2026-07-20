@@ -13,11 +13,53 @@ sys.modules.setdefault("curl_cffi", curl_cffi)
 import notifier
 
 
+class FakeResponse:
+    def __init__(self, status_code, payload=None, text=""):
+        self.status_code = status_code
+        self._payload = payload or {}
+        self.text = text or json.dumps(self._payload)
+
+    def json(self):
+        return self._payload
+
+
 def draft(cover_letter):
     return json.dumps({"hook_type": "proof-led", "cover_letter": cover_letter})
 
 
 class ProposalQualityTests(unittest.TestCase):
+    @patch("notifier._generate", return_value=None)
+    def test_provider_failure_does_not_trigger_qa_retries(self, generate):
+        self.assertIsNone(notifier.generate_proposal({
+            "title": "Mobile MVP", "description": "Build it", "skills": [],
+            "matched": [], "score": 30, "job_type": "FIXED", "fixed": 2000,
+        }))
+        generate.assert_called_once()
+
+    @patch("notifier.time.sleep")
+    @patch("notifier.requests.post", create=True)
+    def test_openai_retries_a_transient_rate_limit(self, post, _sleep):
+        post.side_effect = [
+            FakeResponse(429, {"error": {"code": "rate_limit_exceeded"}}),
+            FakeResponse(200, {"choices": [{"message": {"content": "OK"}}]}),
+        ]
+        with patch.object(notifier, "OPENAI_API_KEY", "test-key"):
+            self.assertEqual(notifier._openai_generate("test", max_tokens=32), "OK")
+        self.assertEqual(post.call_count, 2)
+
+    @patch("notifier.requests.post", create=True)
+    def test_openai_quota_is_reported_after_gemini_fallback(self, post):
+        post.side_effect = [
+            FakeResponse(429, {"error": {"code": "RESOURCE_EXHAUSTED"}}),
+            FakeResponse(429, {"error": {"code": "insufficient_quota"}}),
+        ]
+        with patch.object(notifier, "GEMINI_API_KEY", "gemini-key"), \
+                patch.object(notifier, "GEMINI_MODELS", ["test-gemini"]), \
+                patch.object(notifier, "OPENAI_API_KEY", "openai-key"):
+            self.assertIsNone(notifier._generate("test"))
+        self.assertIn("billing quota", notifier._ai_failure_message("a proposal"))
+        self.assertEqual(post.call_count, 2)
+
     def test_rejects_self_disqualifying_capability_language(self):
         examples = (
             "Hi,\n\nI have not shipped LangGraph, but I can learn it quickly.",

@@ -2,17 +2,24 @@ name: Upwork Job Notifier
 
 on:
   schedule:
-    # RESTART HEARTBEAT ONLY. The job below loops internally for ~5.3 hours, so we do
-    # NOT depend on the (unreliable) scheduler firing every few minutes — it only has to
-    # fire ~once every 5h to relaunch after a run ends. */15 is frequent enough for that
-    # while being far less likely to be throttled/dropped than an aggressive */5.
+    # Heartbeat for the short worker job. A fresh runner reloads current secrets each cycle.
     - cron: "*/15 * * * *"
   workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - "notifier.py"
+      - "run_cycle.sh"
+      - "requirements.txt"
+      - "profile.md"
+      - "proposal_prompt.md"
+      - ".github/workflows/notifier.yml"
 
-# One run at a time. When the long run ends, the next queued/heartbeat run starts.
+# A push/manual restart replaces the stale process immediately so rotated secrets load.
+# Scheduled heartbeats queue normally and keep the service continuous.
 concurrency:
   group: upwork-notifier
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 permissions:
   contents: read
@@ -20,7 +27,7 @@ permissions:
 jobs:
   notify:
     runs-on: ubuntu-latest
-    timeout-minutes: 350   # ~5.8h, under the 6h hard cap; loop exits ~5.3h
+    timeout-minutes: 35
     env:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -39,7 +46,7 @@ jobs:
       KEYWORDS: ${{ vars.KEYWORDS }}
       EXCLUDE_KEYWORDS: ${{ vars.EXCLUDE_KEYWORDS }}
       CHECK_INTERVAL: ${{ vars.CHECK_INTERVAL }}
-      CYCLE_SECONDS: "2400"   # each cycle loops 40 min, then state is cached
+      CYCLE_SECONDS: "1200"   # short jobs reload rotated secrets within ~20 min
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -48,6 +55,12 @@ jobs:
           cache: pip
       - name: Install deps
         run: pip install -r requirements.txt
+      - name: Run regression tests
+        run: python -m unittest -q
+      - name: Verify OpenAI fallback credentials
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        continue-on-error: true
+        run: python notifier.py --check-openai
 
       # Restore the latest dedup state saved by any previous cycle/run.
       - name: Restore dedup state
@@ -60,100 +73,15 @@ jobs:
           restore-keys: |
             upwork-seen-
 
-      # 8 cycles x 40 min = ~5.3h of continuous ~90s checking. State is cached after each
-      # cycle so an unexpected death costs at most one cycle (~40 min) of dedup.
-      - name: Cycle 1
+      # One short cycle per job ensures each new runner receives current GitHub secrets.
+      - name: Run notifier cycle
         continue-on-error: true
         run: bash ./run_cycle.sh
-      - name: Save state 1
+      - name: Save dedup state
         if: always()
         uses: actions/cache/save@v4
         with:
           path: |
             seen.json
             store.json
-          key: upwork-seen-${{ github.run_id }}-1
-
-      - name: Cycle 2
-        continue-on-error: true
-        run: bash ./run_cycle.sh
-      - name: Save state 2
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            seen.json
-            store.json
-          key: upwork-seen-${{ github.run_id }}-2
-
-      - name: Cycle 3
-        continue-on-error: true
-        run: bash ./run_cycle.sh
-      - name: Save state 3
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            seen.json
-            store.json
-          key: upwork-seen-${{ github.run_id }}-3
-
-      - name: Cycle 4
-        continue-on-error: true
-        run: bash ./run_cycle.sh
-      - name: Save state 4
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            seen.json
-            store.json
-          key: upwork-seen-${{ github.run_id }}-4
-
-      - name: Cycle 5
-        continue-on-error: true
-        run: bash ./run_cycle.sh
-      - name: Save state 5
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            seen.json
-            store.json
-          key: upwork-seen-${{ github.run_id }}-5
-
-      - name: Cycle 6
-        continue-on-error: true
-        run: bash ./run_cycle.sh
-      - name: Save state 6
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            seen.json
-            store.json
-          key: upwork-seen-${{ github.run_id }}-6
-
-      - name: Cycle 7
-        continue-on-error: true
-        run: bash ./run_cycle.sh
-      - name: Save state 7
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            seen.json
-            store.json
-          key: upwork-seen-${{ github.run_id }}-7
-
-      - name: Cycle 8
-        continue-on-error: true
-        run: bash ./run_cycle.sh
-      - name: Save state 8
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            seen.json
-            store.json
-          key: upwork-seen-${{ github.run_id }}-8
+          key: upwork-seen-${{ github.run_id }}

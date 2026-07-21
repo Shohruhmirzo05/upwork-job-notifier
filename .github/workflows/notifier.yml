@@ -2,8 +2,10 @@ name: Upwork Job Notifier
 
 on:
   schedule:
-    # Heartbeat for the short worker job. A fresh runner reloads current secrets each cycle.
-    - cron: "*/15 * * * *"
+    # Restart heartbeat only. The worker below stays alive for five hours and checks
+    # Upwork internally every ~90 seconds. Offset the heartbeat from the top of the
+    # hour because GitHub documents heavier schedule delays there.
+    - cron: "7,22,37,52 * * * *"
   workflow_dispatch: {}
   push:
     branches: [main]
@@ -15,8 +17,9 @@ on:
       - "proposal_prompt.md"
       - ".github/workflows/notifier.yml"
 
-# A push/manual restart replaces the stale process immediately so rotated secrets load.
-# Scheduled heartbeats queue normally and keep the service continuous.
+# One worker runs at a time. A scheduled heartbeat waits behind the live worker and
+# starts as soon as it ends. A push/manual restart replaces it immediately so rotated
+# secrets load without waiting five hours.
 concurrency:
   group: upwork-notifier
   cancel-in-progress: ${{ github.event_name != 'schedule' }}
@@ -27,7 +30,7 @@ permissions:
 jobs:
   notify:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 345   # 5h45m, below GitHub's 6h hard limit
     env:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -46,7 +49,7 @@ jobs:
       KEYWORDS: ${{ vars.KEYWORDS }}
       EXCLUDE_KEYWORDS: ${{ vars.EXCLUDE_KEYWORDS }}
       CHECK_INTERVAL: ${{ vars.CHECK_INTERVAL }}
-      CYCLE_SECONDS: "1200"   # short jobs reload rotated secrets within ~20 min
+      CYCLE_SECONDS: "2250"   # 8 cycles x 37.5 min = exactly 5h continuous runtime
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -73,15 +76,100 @@ jobs:
           restore-keys: |
             upwork-seen-
 
-      # One short cycle per job ensures each new runner receives current GitHub secrets.
-      - name: Run notifier cycle
+      # Eight cycles keep the bot live for exactly five hours. Saving state after each
+      # cycle limits duplicate notifications if a runner is interrupted unexpectedly.
+      - name: Cycle 1
         continue-on-error: true
         run: bash ./run_cycle.sh
-      - name: Save dedup state
+      - name: Save state 1
         if: always()
         uses: actions/cache/save@v4
         with:
           path: |
             seen.json
             store.json
-          key: upwork-seen-${{ github.run_id }}
+          key: upwork-seen-${{ github.run_id }}-1
+
+      - name: Cycle 2
+        continue-on-error: true
+        run: bash ./run_cycle.sh
+      - name: Save state 2
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            seen.json
+            store.json
+          key: upwork-seen-${{ github.run_id }}-2
+
+      - name: Cycle 3
+        continue-on-error: true
+        run: bash ./run_cycle.sh
+      - name: Save state 3
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            seen.json
+            store.json
+          key: upwork-seen-${{ github.run_id }}-3
+
+      - name: Cycle 4
+        continue-on-error: true
+        run: bash ./run_cycle.sh
+      - name: Save state 4
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            seen.json
+            store.json
+          key: upwork-seen-${{ github.run_id }}-4
+
+      - name: Cycle 5
+        continue-on-error: true
+        run: bash ./run_cycle.sh
+      - name: Save state 5
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            seen.json
+            store.json
+          key: upwork-seen-${{ github.run_id }}-5
+
+      - name: Cycle 6
+        continue-on-error: true
+        run: bash ./run_cycle.sh
+      - name: Save state 6
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            seen.json
+            store.json
+          key: upwork-seen-${{ github.run_id }}-6
+
+      - name: Cycle 7
+        continue-on-error: true
+        run: bash ./run_cycle.sh
+      - name: Save state 7
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            seen.json
+            store.json
+          key: upwork-seen-${{ github.run_id }}-7
+
+      - name: Cycle 8
+        continue-on-error: true
+        run: bash ./run_cycle.sh
+      - name: Save state 8
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            seen.json
+            store.json
+          key: upwork-seen-${{ github.run_id }}-8

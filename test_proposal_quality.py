@@ -60,6 +60,22 @@ class ProposalQualityTests(unittest.TestCase):
         self.assertIn("billing quota", notifier._ai_failure_message("a proposal"))
         self.assertEqual(post.call_count, 2)
 
+    @patch("notifier.requests.post", create=True)
+    def test_openai_successfully_backs_up_gemini(self, post):
+        post.side_effect = [
+            FakeResponse(429, {"error": {"code": "RESOURCE_EXHAUSTED"}}),
+            FakeResponse(200, {"choices": [{"message": {"content": "Fallback proposal"}}]}),
+        ]
+        with patch.object(notifier, "GEMINI_API_KEY", "gemini-key"), \
+                patch.object(notifier, "GEMINI_MODELS", ["test-gemini"]), \
+                patch.object(notifier, "OPENAI_API_KEY", "openai-key"):
+            self.assertEqual(notifier._generate("test"), "Fallback proposal")
+
+        self.assertEqual(post.call_count, 2)
+        self.assertIn("generativelanguage.googleapis.com", post.call_args_list[0].args[0])
+        self.assertEqual(post.call_args_list[1].args[0],
+                         "https://api.openai.com/v1/chat/completions")
+
     def test_rejects_self_disqualifying_capability_language(self):
         examples = (
             "Hi,\n\nI have not shipped LangGraph, but I can learn it quickly.",

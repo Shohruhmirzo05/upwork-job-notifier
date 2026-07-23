@@ -619,9 +619,13 @@ def _record_ai_failure(provider, kind, detail=""):
 def _ai_failure_message(action="proposal"):
     """Explain the real provider failure instead of blaming Gemini for every error."""
     failures = list(reversed(_AI_FAILURES))
+    quality = next((x for x in failures if x["provider"] == "Quality"), None)
     openai = next((x for x in failures if x["provider"] == "OpenAI"), None)
     gemini = next((x for x in failures if x["provider"] == "Gemini"), None)
     prefix = f"⚠️ Couldn't generate {action}. "
+    if quality:
+        return prefix + ("AI drafts failed the required proposal quality checks. "
+                         "Tap the button to retry.")
     if openai:
         kind = openai["kind"]
         if kind == "insufficient_quota":
@@ -756,13 +760,25 @@ def _openai_generate(prompt, json_mode=False, max_tokens=8192):
     return None
 
 
-def _generate(prompt, json_mode=False, max_tokens=8192):
-    """Free Gemini first; fall back to paid OpenAI only if Gemini is unavailable/exhausted."""
+def _generate(prompt, json_mode=False, max_tokens=8192, prefer_openai=False):
+    """Generate with provider fallback.
+
+    Gemini remains the normal first choice. Proposal QA repairs deliberately prefer
+    OpenAI so a structurally bad Gemini draft cannot trap all retries on Gemini.
+    """
     _AI_FAILURES.clear()
+    if prefer_openai and OPENAI_API_KEY:
+        print("[info] proposal QA fallback — trying OpenAI first", file=sys.stderr)
+        text = _openai_generate(prompt, json_mode=json_mode, max_tokens=max_tokens)
+        if text:
+            print("[info] OpenAI QA fallback succeeded", file=sys.stderr)
+            return text
+        print("[warn] OpenAI QA fallback failed — trying Gemini", file=sys.stderr)
+
     text = _gemini_generate(prompt, json_mode=json_mode, max_tokens=max_tokens)
     if text:
         return text
-    if OPENAI_API_KEY:
+    if OPENAI_API_KEY and not prefer_openai:
         print("[info] Gemini unavailable — falling back to OpenAI", file=sys.stderr)
         text = _openai_generate(prompt, json_mode=json_mode, max_tokens=max_tokens)
         if text:
@@ -838,12 +854,17 @@ def generate_proposal(job):
             "- Use no more than one precise closing question.\n\n"
             f"REJECTED DRAFT:\n{raw or '(empty)'}"
         )
-        raw = _generate(repair, json_mode=use_json)
+        # A Gemini response can be technically successful but unusable. Switch the QA
+        # rewrite to OpenAI instead of spending every retry on the same provider.
+        raw = _generate(repair, json_mode=use_json, prefer_openai=bool(OPENAI_API_KEY))
+        if not raw:
+            return None
 
     final_failures = _proposal_hard_failures(raw)
     if final_failures:
         print(f"[error] proposal rejected after QA: {', '.join(final_failures)}",
               file=sys.stderr)
+        _record_ai_failure("Quality", "rejected", "; ".join(final_failures))
         return None
     return raw
 

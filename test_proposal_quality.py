@@ -76,6 +76,49 @@ class ProposalQualityTests(unittest.TestCase):
         self.assertEqual(post.call_args_list[1].args[0],
                          "https://api.openai.com/v1/chat/completions")
 
+    @patch("notifier._openai_generate")
+    @patch("notifier._gemini_generate")
+    def test_proposal_qa_switches_from_gemini_to_openai(self, gemini, openai):
+        gemini.return_value = draft("Hi,\n\nI have not used MCP, but I can implement it.")
+        openai.return_value = draft(
+            "Hi,\n\nSalom AI Business proves the production agent architecture needed here: "
+            "isolated knowledge, operational actions, human handoff, and monitored API flows."
+        )
+        with patch.object(notifier, "OPENAI_API_KEY", "openai-key"):
+            result = notifier.generate_proposal({
+                "title": "Production MCP platform",
+                "description": "Build a secure multi-agent platform.",
+                "skills": ["MCP", "FastAPI"],
+                "matched": ["ai agent"],
+                "score": 90,
+                "job_type": "HOURLY",
+                "hourly_min": 30,
+                "hourly_max": 60,
+                "fixed": 0,
+            })
+
+        self.assertEqual(result, openai.return_value)
+        gemini.assert_called_once()
+        openai.assert_called_once()
+
+    @patch("notifier._generate")
+    def test_quality_rejection_is_not_reported_as_missing_providers(self, generate):
+        generate.return_value = draft(
+            "Hi,\n\nI have not used this framework, but I can learn it."
+        )
+        self.assertIsNone(notifier.generate_proposal({
+            "title": "Mobile MVP",
+            "description": "Build it",
+            "skills": [],
+            "matched": [],
+            "score": 30,
+            "job_type": "FIXED",
+            "fixed": 2000,
+        }))
+        message = notifier._ai_failure_message("a proposal")
+        self.assertIn("quality checks", message)
+        self.assertNotIn("No AI provider", message)
+
     def test_rejects_self_disqualifying_capability_language(self):
         examples = (
             "Hi,\n\nI have not shipped LangGraph, but I can learn it quickly.",

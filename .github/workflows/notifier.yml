@@ -61,7 +61,6 @@ jobs:
       - name: Run regression tests
         run: python -m unittest -q
       - name: Verify OpenAI fallback credentials
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         continue-on-error: true
         run: python notifier.py --check-openai
 

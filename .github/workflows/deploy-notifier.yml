@@ -1,0 +1,106 @@
+name: Deploy notifier to DigitalOcean
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-upwork-notifier
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DEPLOY_HOST: ${{ secrets.DO_NOTIFIER_HOST }}
+      DEPLOY_USER: ${{ secrets.DO_NOTIFIER_USER }}
+      DEPLOY_TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      DEPLOY_TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      DEPLOY_WEBSHARE_URL: ${{ secrets.WEBSHARE_URL }}
+      DEPLOY_HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
+      DEPLOY_GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      DEPLOY_GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+      DEPLOY_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      DEPLOY_OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+      DEPLOY_TRACKER_API_URL: ${{ vars.TRACKER_API_URL }}
+      DEPLOY_TRACKER_API_TOKEN: ${{ secrets.TRACKER_API_TOKEN }}
+      DEPLOY_MAX_PAGES: ${{ vars.MAX_PAGES }}
+      DEPLOY_MAX_NOTIFS: ${{ vars.MAX_NOTIFS }}
+      DEPLOY_MAX_AGE_HOURS: ${{ vars.MAX_AGE_HOURS }}
+      DEPLOY_JOBS_PER_QUERY: ${{ vars.JOBS_PER_QUERY }}
+      DEPLOY_KEYWORDS: ${{ vars.KEYWORDS }}
+      DEPLOY_EXCLUDE_KEYWORDS: ${{ vars.EXCLUDE_KEYWORDS }}
+      DEPLOY_CHECK_INTERVAL: ${{ vars.CHECK_INTERVAL }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure pinned SSH access
+        run: |
+          install -m 0700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.DO_NOTIFIER_SSH_KEY }}" > ~/.ssh/id_ed25519
+          printf '%s\n' "${{ secrets.DO_NOTIFIER_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 0600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+
+      - name: Build deployment package and environment
+        run: |
+          tar -czf "/tmp/upwork-notifier-${GITHUB_SHA}.tar.gz" \
+            notifier.py filters.json profile.md proposal_prompt.md requirements.txt deploy/run_notifier.py
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          names = (
+              "TELEGRAM_BOT_TOKEN",
+              "TELEGRAM_CHAT_ID",
+              "WEBSHARE_URL",
+              "HEALTHCHECK_URL",
+              "GEMINI_API_KEY",
+              "GEMINI_MODEL",
+              "OPENAI_API_KEY",
+              "OPENAI_MODEL",
+              "TRACKER_API_URL",
+              "TRACKER_API_TOKEN",
+              "MAX_PAGES",
+              "MAX_NOTIFS",
+              "MAX_AGE_HOURS",
+              "JOBS_PER_QUERY",
+              "KEYWORDS",
+              "EXCLUDE_KEYWORDS",
+              "CHECK_INTERVAL",
+          )
+          values = {name: os.environ.get(f"DEPLOY_{name}", "") for name in names}
+          values.update(
+              {
+                  "OPENAI_REASONING": "low",
+                  "SERVE_SECONDS": "31536000",
+                  "SEEN_PATH": "/var/lib/upwork-notifier/seen.json",
+                  "STORE_PATH": "/var/lib/upwork-notifier/store.json",
+                  "TOKEN_PATH": "/var/lib/upwork-notifier/token.json",
+              }
+          )
+          path = Path(f"/tmp/upwork-notifier-env-{os.environ['GITHUB_SHA']}.json")
+          path.write_text(json.dumps(values), encoding="utf-8")
+          path.chmod(0o600)
+          PY
+
+      - name: Upload and activate release
+        run: |
+          archive="/tmp/upwork-notifier-${GITHUB_SHA}.tar.gz"
+          environment="/tmp/upwork-notifier-env-${GITHUB_SHA}.json"
+          destination="/home/${DEPLOY_USER}/incoming"
+          scp "$archive" "$environment" "${DEPLOY_USER}@${DEPLOY_HOST}:${destination}/"
+          ssh "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "sudo /usr/local/sbin/deploy-upwork-notifier \
+            '${destination}/$(basename "$archive")' \
+            '${destination}/$(basename "$environment")' \
+            '${GITHUB_SHA}'"
+
+      - name: Verify service
+        run: |
+          ssh "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "sudo /bin/systemctl is-active --quiet upwork-notifier.service"

@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$#" -ne 3 ]]; then
+  echo "usage: deploy-upwork-notifier ARCHIVE ENV_JSON RELEASE" >&2
+  exit 64
+fi
+
+archive="$1"
+environment_json="$2"
+release="$3"
+incoming_root="/home/upwork-deploy/incoming"
+releases_root="/opt/upwork-notifier/releases"
+release_dir="${releases_root}/${release}"
+
+case "$archive" in
+  "${incoming_root}"/*.tar.gz) ;;
+  *) echo "archive must be under ${incoming_root}" >&2; exit 64 ;;
+esac
+case "$environment_json" in
+  "${incoming_root}"/*.json) ;;
+  *) echo "environment file must be under ${incoming_root}" >&2; exit 64 ;;
+esac
+if [[ ! "$release" =~ ^[0-9a-f]{7,40}$ ]]; then
+  echo "release must be a 7-40 character git SHA" >&2
+  exit 64
+fi
+if [[ ! -f "$archive" || -L "$archive" || ! -f "$environment_json" || -L "$environment_json" ]]; then
+  echo "deployment inputs must be regular files" >&2
+  exit 66
+fi
+
+# Validate the secret payload before touching the active release. Never print it.
+python3 - "$environment_json" <<'PY'
+import json
+import sys
+
+required = {
+    "TELEGRAM_BOT_TOKEN",
+    "TELEGRAM_CHAT_ID",
+    "GEMINI_API_KEY",
+    "OPENAI_API_KEY",
+}
+with open(sys.argv[1], encoding="utf-8") as handle:
+    values = json.load(handle)
+if not isinstance(values, dict) or any(
+    not isinstance(key, str) or not isinstance(value, str)
+    for key, value in values.items()
+):
+    raise SystemExit("environment JSON must contain string keys and values")
+missing = sorted(key for key in required if not values.get(key))
+if missing:
+    raise SystemExit("missing required deployment values: " + ", ".join(missing))
+PY
+
+if [[ -e "$release_dir" ]]; then
+  echo "release already exists: ${release}" >&2
+  exit 73
+fi
+
+install -d -o upwork-notifier -g upwork-notifier -m 0755 "$release_dir"
+tar -xzf "$archive" --no-same-owner -C "$release_dir"
+chown -R upwork-notifier:upwork-notifier "$release_dir"
+
+runuser -u upwork-notifier -- python3 -m venv "${release_dir}/.venv"
+runuser -u upwork-notifier -- "${release_dir}/.venv/bin/pip" install \
+  --disable-pip-version-check --no-cache-dir -r "${release_dir}/requirements.txt"
+
+install -d -o root -g upwork-notifier -m 0750 /etc/upwork-notifier
+install -o root -g upwork-notifier -m 0640 "$environment_json" /etc/upwork-notifier/env.json
+install -d -o upwork-notifier -g upwork-notifier -m 0750 /var/lib/upwork-notifier
+
+ln -sfn "$release_dir" /opt/upwork-notifier/current
+systemctl restart upwork-notifier.service
+systemctl is-active --quiet upwork-notifier.service
+
+rm -f -- "$archive" "$environment_json"
+
+# Keep the active release and the two preceding releases for quick rollback.
+mapfile -t old_releases < <(
+  find "$releases_root" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' |
+    sort -nr |
+    tail -n +4 |
+    cut -d' ' -f2-
+)
+if ((${#old_releases[@]})); then
+  rm -rf -- "${old_releases[@]}"
+fi
+
+echo "deployed ${release}"

@@ -1,20 +1,21 @@
-# Upwork → Telegram Job Notifier (serverless, GitHub Actions)
+# Upwork → Telegram Job Notifier
 
-Pushes new Upwork jobs matching your profile to Telegram, 24/7 in the cloud on GitHub
-Actions — **your computer can be off**. Cost: **$0** (public repo = unlimited Actions
-minutes, no AI, no paid APIs). All filtering is deterministic keyword scoring you control.
+Pushes new Upwork jobs matching your profile to Telegram, 24/7 from an isolated systemd
+service on DigitalOcean — **your computer can be off**. GitHub Actions is used only for
+controlled deployments and proposal QA, not as a permanent application server. All
+filtering is deterministic keyword scoring you control.
 
 ## How it works
-The workflow runs continuously (each run loops internally, checking every ~90s; runs chain
-back-to-back), so you're pinged **~1–2 min after a matching job is posted**. Each check:
+The server service runs continuously and checks every ~90s, so you're pinged **~1–2 min
+after a matching job is posted**. Each check:
 1. Gets a *visitor* GraphQL token from upwork.com (Chrome TLS impersonation via curl_cffi),
    **cached ~25 min** and reused across checks so the (403-prone) homepage is hit rarely.
 2. Runs **multiple scoped searches** (the `search_queries` in `filters.json`), newest-first,
    and **merges + dedupes** the results by job id — deep niche coverage, not a thin slice
    of the newest *global* jobs.
 3. **Scores** each job with a local weighted-keyword engine (`filters.json`).
-4. Dedupes against `seen.json`, which persists in the **GitHub Actions cache** (no repo
-   commits — history stays clean; if the cache is ever lost it just re-seeds silently).
+4. Dedupes against `seen.json`, which persists in the service's dedicated state directory
+   (no repo commits; if state is ever lost it safely re-seeds without sending old jobs).
 5. Skips anything posted more than `MAX_AGE_HOURS` (24h) ago.
 6. Sends each new job scoring ≥ `min_score` to Telegram — tagged **🔥 HOT / 🟢 GOOD / 🟡 MAYBE**,
    best score first, showing which keywords hit and how long ago it was posted.
@@ -153,6 +154,17 @@ cp .env.example .env      # fill in your values
 set -a && source .env && set +a
 python notifier.py
 ```
+
+## Production deployment
+
+The notifier runs as `upwork-notifier.service` with its code under
+`/opt/upwork-notifier`, persistent state under `/var/lib/upwork-notifier`, and secrets
+under `/etc/upwork-notifier`. The service has a 384 MB hard memory limit and does not
+share application files, databases, ports, or process ownership with Prime Truck.
+
+Deploy the current `main` commit using the manually triggered
+`Deploy notifier to DigitalOcean` workflow. GitHub Secrets remain the source of truth
+for Telegram, Gemini, OpenAI, tracker, proxy, and healthcheck credentials.
 
 ## Troubleshooting
 - **No `visitor_gql_token` cookie / 403:** direct IP blocked → add the Webshare proxy secret.

@@ -1,0 +1,3 @@
+Defaults:upwork-deploy !requiretty
+upwork-deploy ALL=(root) NOPASSWD: /usr/local/sbin/deploy-upwork-notifier *
+upwork-deploy ALL=(root) NOPASSWD: /bin/systemctl is-active --quiet upwork-notifier.service

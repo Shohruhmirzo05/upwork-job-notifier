@@ -228,6 +228,13 @@ class ProposalQualityTests(unittest.TestCase):
         self.assertIn("s:~job123", callbacks)
         self.assertIn("q:~job123", callbacks)
 
+        pipeline = notifier._pipeline_buttons("~job123")["inline_keyboard"]
+        pipeline_callbacks = [button["callback_data"] for row in pipeline for button in row]
+        self.assertEqual(
+            pipeline_callbacks,
+            ["v:~job123", "r:~job123", "i:~job123", "w:~job123", "l:~job123"],
+        )
+
     def test_private_fit_warning_is_not_mixed_into_cover_letter(self):
         raw = json.dumps({
             "hook_type": "proof-led",

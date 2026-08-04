@@ -961,12 +961,15 @@ def _proposal_hard_failures(raw, expected_mode=None):
     if mode == "team":
         if not re.search(r"\bFera Tech\b", cover, re.I):
             failures.append("team mode does not mention Fera Tech")
-        if not re.search(r"\b(?:I(?:'ll| will| would) (?:personally )?lead|I will remain|I would remain|I am your lead)\b", cover, re.I):
+        if not re.search(
+                r"\b(?:I(?:'ll| will| would) [^.\n]{0,45}\blead\b|"
+                r"I(?:'ll| will| would) (?:serve|remain|act) as (?:your|the) (?:technical )?lead|"
+                r"I am your (?:technical )?lead)\b", cover, re.I):
             failures.append("team mode does not say Shohruh will lead personally")
 
     names = (
         "Salom AI Business", "BandMate", "Launchcast", "CrisisPath", "Clove AI",
-        "Goby AI", "PicTrans", "QuarCade", "Kowl", "Karly", "Fera Tech", "Salom AI",
+        "Goby AI", "PicTrans", "QuarCade", "Kowl", "Karly", "Salom AI",
     )
     remaining = cover.lower()
     projects = []

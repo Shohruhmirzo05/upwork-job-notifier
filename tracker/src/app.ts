@@ -1,5 +1,5 @@
 import './styles.css';
-import '@phosphor-icons/web/regular';
+import './phosphor.css';
 
 type Tab = 'inbox' | 'applications' | 'stats';
 type Status = 'new' | 'generated' | 'applied' | 'viewed' | 'replied' | 'interview' | 'won' | 'lost' | 'skipped';
@@ -49,16 +49,17 @@ let authenticated = false;
 let query = '';
 let loading = false;
 let debounce = 0;
+let jobsRequest = 0;
 let analyticsRangeKey = 'last30';
 let customRange = { from: '', to: '' };
 
 const statusLabel: Record<Status, string> = {
-  new: 'New', generated: 'Applied', applied: 'Applied', viewed: 'Viewed', replied: 'Replied',
+  new: 'New', generated: 'Draft ready', applied: 'Applied', viewed: 'Viewed', replied: 'Replied',
   interview: 'Interview', won: 'Won', lost: 'Lost', skipped: "Didn't apply",
 };
 
 const statusIcon: Record<Status, string> = {
-  new: 'ph-inbox', generated: 'ph-file-text', applied: 'ph-paper-plane-tilt', viewed: 'ph-eye',
+  new: 'ph-tray', generated: 'ph-file-text', applied: 'ph-paper-plane-tilt', viewed: 'ph-eye',
   replied: 'ph-chat-circle-dots', interview: 'ph-video-camera', won: 'ph-trophy',
   lost: 'ph-x-circle', skipped: 'ph-skip-forward',
 };
@@ -77,7 +78,7 @@ const selectableStatuses: Array<{ value: Status; label: string }> = [
 function nextStatus(job: Job): { value: Status; label: string; icon: string } | null {
   const next: Partial<Record<Status, { value: Status; label: string; icon: string }>> = {
     new: { value: 'applied', label: 'Mark applied', icon: 'ph-paper-plane-tilt' },
-    generated: { value: 'viewed', label: 'Client viewed', icon: 'ph-eye' },
+    generated: { value: 'applied', label: 'Mark applied', icon: 'ph-paper-plane-tilt' },
     applied: { value: 'viewed', label: 'Client viewed', icon: 'ph-eye' },
     viewed: { value: 'replied', label: 'Mark replied', icon: 'ph-chat-circle-dots' },
     replied: { value: 'interview', label: 'Got interview', icon: 'ph-video-camera' },
@@ -242,7 +243,7 @@ function shell(content: string): string {
     </div>`;
 }
 
-const inboxIcon = '<i class="ph ph-inbox"></i>';
+const inboxIcon = '<i class="ph ph-tray"></i>';
 const applicationsIcon = '<i class="ph ph-clipboard-text"></i>';
 const statsIcon = '<i class="ph ph-chart-bar"></i>';
 
@@ -260,16 +261,34 @@ function bindShell(): void {
 
 async function loadJobs(): Promise<void> {
   if (!authenticated) return;
+  const request = ++jobsRequest;
+  const requestedTab = tab;
+  const requestedQuery = query;
+  const restoreSearchFocus = document.activeElement?.id === 'search';
   loading = true;
-  renderJobs();
+  // Keep the active search input mounted while its debounced request runs. Replacing it
+  // here drops focus on every pause in typing, which makes multi-word searches painful.
+  if (!restoreSearchFocus) renderJobs();
   try {
-    const result = await api<{ jobs: Job[] }>(`/api/jobs?tab=${tab}&q=${encodeURIComponent(query)}`);
+    const result = await api<{ jobs: Job[] }>(`/api/jobs?tab=${requestedTab}&q=${encodeURIComponent(requestedQuery)}`);
+    if (request !== jobsRequest || requestedTab !== tab || requestedQuery !== query) return;
     jobs = result.jobs;
   } catch (reason) {
-    if (authenticated) toast(reason instanceof Error ? reason.message : 'Could not load jobs');
+    if (request === jobsRequest && requestedTab === tab && requestedQuery === query && authenticated) {
+      toast(reason instanceof Error ? reason.message : 'Could not load jobs');
+    }
   } finally {
-    loading = false;
-    if (authenticated) renderJobs();
+    if (request === jobsRequest) {
+      loading = false;
+      if (requestedTab === tab && requestedQuery === query && authenticated) {
+        renderJobs();
+        if (restoreSearchFocus) {
+          const search = document.querySelector<HTMLInputElement>('#search');
+          search?.focus();
+          search?.setSelectionRange(search.value.length, search.value.length);
+        }
+      }
+    }
   }
 }
 
@@ -351,7 +370,7 @@ function skeletons(): string {
 }
 
 function emptyState(applications: boolean): string {
-  return `<div class="empty"><div>${applications ? applicationsIcon : inboxIcon}</div><h3>${query ? 'No matching jobs' : applications ? 'No applications yet' : 'Inbox is clear'}</h3><p>${query ? 'Try another word from the title, brief, proposal, notes, or paste the Upwork link.' : applications ? 'Generated proposals are recorded as applied automatically.' : 'New Telegram matches will land here automatically.'}</p></div>`;
+  return `<div class="empty"><div>${applications ? applicationsIcon : inboxIcon}</div><h3>${query ? 'No matching jobs' : applications ? 'No proposals yet' : 'Inbox is clear'}</h3><p>${query ? 'Try another word from the title, brief, proposal, notes, or paste the Upwork link.' : applications ? 'Generated drafts appear here. Confirm Applied only after you submit on Upwork.' : 'New Telegram matches will land here automatically.'}</p></div>`;
 }
 
 async function setStatus(cipher: string, status: Status): Promise<void> {
@@ -361,7 +380,12 @@ async function setStatus(cipher: string, status: Status): Promise<void> {
     toast(status === 'applied' ? 'Counted as applied' : `Moved to ${statusLabel[status]}`);
     await loadJobs();
     if (document.querySelector('.drawer') && selected) openJob(selected);
-  } catch (reason) { toast(reason instanceof Error ? reason.message : 'Update failed'); }
+  } catch (reason) {
+    toast(reason instanceof Error ? reason.message : 'Update failed');
+    // Card controls are disabled before the request. Re-render on failure so they do not
+    // remain permanently unusable after a transient network or server error.
+    if (authenticated) renderJobs();
+  }
 }
 
 async function openJob(job: Job): Promise<void> {
@@ -475,7 +499,7 @@ function renderStats(data: Stats): void {
         <div class="funnel-list">${funnelItems.map(([label, value]) => `<div><span>${label}</span><div><i style="width:${Math.max(Number(value) / max * 100, Number(value) ? 5 : 0)}%"></i></div><strong>${value}</strong></div>`).join('')}</div>
       </article>
       <article class="panel hooks"><div class="panel-head"><div><p class="eyebrow">A/B SIGNAL</p><h2>Hook performance</h2></div></div>
-        ${data.hooks.length ? `<div class="hook-table"><div class="hook-row head"><span>Opening style</span><span>Sent</span><span>Reply</span><span>Interview</span></div>${data.hooks.map(hook => `<div class="hook-row"><strong>${esc(hook.hook_type)}</strong><span>${hook.applied}</span><span>${rate(Number(hook.replied), Number(hook.applied))}</span><span>${rate(Number(hook.interview), Number(hook.applied))}</span></div>`).join('')}</div>` : '<div class="empty mini"><p>Track a few applications to begin comparing hook styles.</p></div>'}
+        ${data.hooks.length ? `<div class="hook-table"><div class="hook-row head"><span>Opening style</span><span>Sent</span><span>Viewed</span><span>Reply</span><span>Interview</span></div>${data.hooks.map(hook => `<div class="hook-row"><strong>${esc(hook.hook_type)}</strong><span>${hook.applied}</span><span>${rate(Number(hook.viewed), Number(hook.applied))}</span><span>${rate(Number(hook.replied), Number(hook.applied))}</span><span>${rate(Number(hook.interview), Number(hook.applied))}</span></div>`).join('')}</div>` : '<div class="empty mini"><p>Track a few applications to begin comparing hook styles.</p></div>'}
       </article>
     </section>
     <section class="insight"><div><i class="ph ph-lightbulb"></i></div><p><strong>Your next useful signal</strong><span>${applied < 10 ? `Track ${10 - applied} more application${10 - applied === 1 ? '' : 's'} before judging a hook. Small samples are noisy.` : 'Prioritize the hook with the strongest interview rate, then keep testing against one alternative.'}</span></p></section>

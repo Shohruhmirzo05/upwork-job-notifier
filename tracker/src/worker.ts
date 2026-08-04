@@ -149,19 +149,27 @@ async function ingest(request: Request, env: Env): Promise<Response> {
   const hookType = stringValue(body.hook_type, 40) || (proposal ? classifyHook(proposal) : 'unclassified');
   const screening = Array.isArray(body.screening) ? body.screening : [];
   const isGenerated = event === 'proposal_generated' && Boolean(proposal);
+  const isConfirmed = event === 'application_confirmed';
+  const isSkipped = event === 'application_skipped';
   const now = new Date().toISOString();
 
-  const current = await env.DB.prepare('SELECT status FROM jobs WHERE cipher = ?').bind(cipher).first<{ status: JobStatus }>();
+  const current = await env.DB.prepare('SELECT status, applied_confirmed FROM jobs WHERE cipher = ?')
+    .bind(cipher).first<{ status: JobStatus; applied_confirmed: number }>();
   const prior = current?.status ?? null;
-  const next = isGenerated && (!prior || prior === 'new' || prior === 'skipped') ? 'applied' : prior ?? 'new';
-  const autoApplied = isGenerated && next === 'applied';
+  const reachedFunnel = prior != null && ['applied', 'viewed', 'replied', 'interview', 'won', 'lost'].includes(prior);
+  const canSkip = !prior || ['new', 'generated', 'applied', 'skipped'].includes(prior);
+  let next: JobStatus = prior ?? 'new';
+  if (isGenerated && (!prior || prior === 'new' || prior === 'skipped')) next = 'generated';
+  if (isConfirmed && (!prior || ['new', 'generated', 'skipped', 'applied'].includes(prior))) next = 'applied';
+  if (isSkipped && canSkip) next = 'skipped';
+  const confirmed = isSkipped && canSkip ? 0 : (isConfirmed || reachedFunnel || Boolean(current?.applied_confirmed) ? 1 : 0);
 
   await env.DB.batch([
     env.DB.prepare(`
       INSERT INTO jobs (
         cipher,title,description,skills_json,matched_json,budget,link,publish_time,score,tier,
-        proposal,hook_type,screening_json,status,applied_confirmed,notified_at,generated_at,applied_at,created_at,updated_at
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        proposal,hook_type,screening_json,status,applied_confirmed,notified_at,generated_at,applied_at,skipped_at,created_at,updated_at
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(cipher) DO UPDATE SET
         title=CASE WHEN excluded.title != '' THEN excluded.title ELSE jobs.title END,
         description=CASE WHEN excluded.description != '' THEN excluded.description ELSE jobs.description END,
@@ -175,21 +183,22 @@ async function ingest(request: Request, env: Env): Promise<Response> {
         proposal=CASE WHEN excluded.proposal != '' THEN excluded.proposal ELSE jobs.proposal END,
         hook_type=CASE WHEN excluded.proposal != '' THEN excluded.hook_type ELSE jobs.hook_type END,
         screening_json=CASE WHEN excluded.screening_json != '[]' THEN excluded.screening_json ELSE jobs.screening_json END,
-        status=CASE WHEN jobs.status IN ('new','skipped') AND excluded.status='applied' THEN 'applied' ELSE jobs.status END,
-        applied_confirmed=CASE WHEN jobs.status IN ('new','skipped') AND excluded.status='applied' THEN 1 ELSE jobs.applied_confirmed END,
+        status=excluded.status,
+        applied_confirmed=excluded.applied_confirmed,
         notified_at=COALESCE(jobs.notified_at,excluded.notified_at),
         generated_at=COALESCE(excluded.generated_at,jobs.generated_at),
         applied_at=COALESCE(jobs.applied_at,excluded.applied_at),
+        skipped_at=COALESCE(excluded.skipped_at,jobs.skipped_at),
         updated_at=excluded.updated_at
     `).bind(
       cipher, stringValue(job.title, 500), stringValue(job.description), jsonArray(job.skills),
       jsonArray(job.matched), stringValue(job.budget, 200), stringValue(job.link, 1000),
       stringValue(job.publish_time, 100) || null, Number(job.score) || 0, stringValue(job.tier, 100),
-      proposal, hookType, jsonArray(screening), next, autoApplied ? 1 : 0, event === 'notified' ? now : null,
-      isGenerated ? now : null, autoApplied ? now : null, now, now,
+      proposal, hookType, jsonArray(screening), next, confirmed, event === 'notified' ? now : null,
+      isGenerated ? now : null, isConfirmed ? now : null, isSkipped ? now : null, now, now,
     ),
     env.DB.prepare('INSERT INTO events (job_cipher,event_type,from_status,to_status,metadata_json) VALUES (?,?,?,?,?)')
-      .bind(cipher, event, prior, next, JSON.stringify({ source: 'notifier' })),
+      .bind(cipher, event, prior, next, JSON.stringify({ source: 'notifier', confirmed: Boolean(confirmed) })),
   ]);
   return json({ ok: true, cipher, status: next });
 }
@@ -290,23 +299,31 @@ async function stats(url: URL, env: Env): Promise<Response> {
   if (to) { rangeConditions.push('date(COALESCE(applied_at,generated_at,updated_at)) <= date(?)'); rangeBindings.push(to); }
   const appliedWhere = rangeConditions.join(' AND ');
   const bindRange = (query: string) => env.DB.prepare(query).bind(...rangeBindings);
+  // Stage timestamps preserve reached milestones after a job is marked Lost or moved
+  // backward for correction. Current status remains as a fallback for older records and
+  // direct jumps (for example Applied -> Won).
+  const viewed = "viewed_at IS NOT NULL OR status IN ('viewed','replied','interview','won')";
+  const replied = "replied_at IS NOT NULL OR status IN ('replied','interview','won')";
+  const interviewed = "interview_at IS NOT NULL OR status IN ('interview','won')";
+  const won = "won_at IS NOT NULL OR status='won'";
   const [funnel, hooks, weekly, totals] = await Promise.all([
     bindRange(`SELECT
       COUNT(*) applied,
-      SUM(CASE WHEN status IN ('viewed','replied','interview','won') THEN 1 ELSE 0 END) viewed,
-      SUM(CASE WHEN status IN ('replied','interview','won') THEN 1 ELSE 0 END) replied,
-      SUM(CASE WHEN status IN ('interview','won') THEN 1 ELSE 0 END) interview,
-      SUM(CASE WHEN status='won' THEN 1 ELSE 0 END) won
+      SUM(CASE WHEN ${viewed} THEN 1 ELSE 0 END) viewed,
+      SUM(CASE WHEN ${replied} THEN 1 ELSE 0 END) replied,
+      SUM(CASE WHEN ${interviewed} THEN 1 ELSE 0 END) interview,
+      SUM(CASE WHEN ${won} THEN 1 ELSE 0 END) won
       FROM jobs WHERE ${appliedWhere}`).first(),
     bindRange(`SELECT hook_type,
       COUNT(*) applied,
-      SUM(CASE WHEN status IN ('replied','interview','won') THEN 1 ELSE 0 END) replied,
-      SUM(CASE WHEN status IN ('interview','won') THEN 1 ELSE 0 END) interview,
-      SUM(CASE WHEN status='won' THEN 1 ELSE 0 END) won
+      SUM(CASE WHEN ${viewed} THEN 1 ELSE 0 END) viewed,
+      SUM(CASE WHEN ${replied} THEN 1 ELSE 0 END) replied,
+      SUM(CASE WHEN ${interviewed} THEN 1 ELSE 0 END) interview,
+      SUM(CASE WHEN ${won} THEN 1 ELSE 0 END) won
       FROM jobs WHERE ${appliedWhere} AND hook_type != 'unclassified' GROUP BY hook_type ORDER BY applied DESC`).all(),
     bindRange(`SELECT substr(COALESCE(applied_at,generated_at,updated_at),1,10) day,
       COUNT(*) applied,
-      SUM(CASE WHEN status IN ('replied','interview','won') THEN 1 ELSE 0 END) replies
+      SUM(CASE WHEN ${replied} THEN 1 ELSE 0 END) replies
       FROM jobs WHERE ${appliedWhere}
       GROUP BY day ORDER BY day`).all(),
     bindRange(`SELECT COUNT(*) total, COUNT(*) applied FROM jobs WHERE ${appliedWhere}`).first(),

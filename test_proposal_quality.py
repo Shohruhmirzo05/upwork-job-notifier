@@ -145,6 +145,69 @@ class ProposalQualityTests(unittest.TestCase):
             notifier._proposal_hard_failures(draft(cover)),
         )
 
+    def test_team_mode_is_conservative(self):
+        individual_jobs = (
+            {"title": "Senior Flutter Developer", "description": "Join our team and collaborate with our designer."},
+            {"title": "iOS Engineer", "description": "Individual freelancers only. No agencies."},
+            {"title": "React Native Developer", "description": "Work directly with the developer on our product team."},
+        )
+        for job in individual_jobs:
+            job["skills"] = []
+            with self.subTest(job=job["title"]):
+                self.assertEqual(notifier._proposal_mode(job), "individual")
+
+        team_jobs = (
+            {"title": "Senior AI Full-Stack Development Team Needed", "description": "Enhance our production pipeline."},
+            {"title": "Flutter Developer or Small Team", "description": "A small team is welcome."},
+            {"title": "Product build", "description": "We are looking for a development agency to handle mobile and backend."},
+        )
+        for job in team_jobs:
+            job["skills"] = []
+            with self.subTest(job=job["title"]):
+                self.assertEqual(notifier._proposal_mode(job), "team")
+
+    def test_rejects_formulaic_or_confrontational_preview(self):
+        examples = (
+            "Hi,\n\nThe main risk is not the UI, it is the backend architecture.",
+            "Hi,\n\nThis product lives or dies on realtime latency.",
+            "Hi,\n\nBefore touching the code, I would audit every dependency.",
+            "Hi,\n\nThe hard part is getting Apple approval.",
+        )
+        for cover in examples:
+            with self.subTest(cover=cover):
+                self.assertIn(
+                    "uses a confrontational or formulaic preview",
+                    notifier._proposal_hard_failures(draft(cover), "individual"),
+                )
+
+    def test_individual_mode_rejects_fera_tech_pitch(self):
+        cover = "Hi,\n\nLaunchcast is a close match. Our team at Fera Tech can deliver the app."
+        self.assertIn(
+            "mentions a company or delivery team in individual mode",
+            notifier._proposal_hard_failures(draft(cover), "individual"),
+        )
+
+    def test_team_mode_requires_fera_tech_and_personal_lead(self):
+        missing = "Hi,\n\nI can assemble a team to deliver the mobile and backend work."
+        failures = notifier._proposal_hard_failures(draft(missing), "team")
+        self.assertIn("team mode does not mention Fera Tech", failures)
+        self.assertIn("team mode does not say Shohruh will lead personally", failures)
+
+        valid = (
+            "Hi,\n\nFera Tech can cover the mobile and backend work in parallel, and I'll "
+            "personally lead the architecture, implementation reviews, and communication."
+        )
+        failures = notifier._proposal_hard_failures(draft(valid), "team")
+        self.assertNotIn("team mode does not mention Fera Tech", failures)
+        self.assertNotIn("team mode does not say Shohruh will lead personally", failures)
+
+    def test_proposal_buttons_require_application_confirmation(self):
+        keyboard = notifier._proposal_buttons("~job123")["inline_keyboard"]
+        callbacks = [button["callback_data"] for row in keyboard for button in row]
+        self.assertIn("a:~job123", callbacks)
+        self.assertIn("s:~job123", callbacks)
+        self.assertIn("q:~job123", callbacks)
+
     def test_private_fit_warning_is_not_mixed_into_cover_letter(self):
         raw = json.dumps({
             "hook_type": "proof-led",

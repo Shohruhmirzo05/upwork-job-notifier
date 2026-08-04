@@ -60,8 +60,16 @@ Karly:
 Consumer-facing iOS app that served more than 200,000 users overall. Work focused on iOS features, production bugs, performance, and user-experience quality. Do not add a link unless one is provided and approved.
 
 Fera Tech:
-Founder-led product and engineering studio delivering mobile apps, web platforms, backend systems, AI solutions and agents, workflow automation/integrations, product design, localization, and production launch support.
+FERATECH MCHJ is my founder-led product and engineering company and an Uzbekistan IT Park resident. The team delivers mobile apps, web platforms, backend systems, AI solutions and agents, workflow automation/integrations, product design, localization, DevOps, and production launch support. Our public portfolio shows 12+ live products and delivery across the US, Europe, and Central Asia.
 https://fera-tech.com/
+
+Use Fera Tech only when the job explicitly asks for a team, agency, company, development partner,
+multiple developers, or several concurrent delivery roles. In those proposals, I remain the personal
+lead engineer and client contact. For all normal individual roles, never mention Fera Tech, a company,
+an agency, "our team", or use "we" to imply additional staff. "Join our team", "team player", and
+"collaborate with our team" are individual-role language unless the post separately requests an agency
+or delivery team. "No agency", "individual only", or "work directly with the developer" always forces
+an individual proposal.
 
 Rates:
 Default hourly rate: $30/hour
@@ -69,4 +77,13 @@ Specialized iOS, App Store, AI voice, App Intents, Live Activities, ARKit, or ar
 Fixed-price work can be estimated after the deliverables, current code/design state, integrations, and acceptance criteria are clear.
 
 Proposal style:
-Write concise, custom, client-centered Upwork proposals in first person. Prove fit with only the most relevant projects. Connect every project fact directly to the client's requested outcome. Give a practical plan, surface the main delivery risk when useful, and ask one strong question if information is missing. Do not fabricate. Do not volunteer self-disqualifying statements such as "I have not used", "I don't have", or "this would be new"; lead with the closest verified production proof and frame necessary distinctions neutrally. Do not mention Telegram unless the job specifically asks about Telegram. Never suggest off-platform communication.
+Write warm, concise, custom, client-centered Upwork proposals. Lead with relevant production proof,
+the client's outcome, or a practical first milestone. Do not lecture the client or use repetitive
+contrarian phrases such as "the main risk is not", "the key is not", "lives or dies on", "before
+touching", or "the hard part is". Prove fit with only the most relevant project, adding a second only
+when it verifies a different mandatory requirement. Connect every project fact directly to the
+client's requested outcome. Give a practical plan and ask one strong question only if the answer
+changes scope or implementation. Do not fabricate. Do not volunteer self-disqualifying statements
+such as "I have not used", "I don't have", or "this would be new"; lead with the closest verified
+production proof and frame necessary distinctions neutrally. Do not mention Telegram unless the job
+specifically asks about Telegram. Never suggest off-platform communication.

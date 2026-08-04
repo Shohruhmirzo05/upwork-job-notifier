@@ -80,7 +80,7 @@ Variables (simple comma lists).
 - Private repo, files, and workflow: **live**.
 - Bot: **@upwork_notificationsbot** → your chat. Secrets `TELEGRAM_BOT_TOKEN` +
   `TELEGRAM_CHAT_ID`: **set**.
-- Baseline seeded. It's running on the ~10-min cron now.
+- Baseline seeded. The DigitalOcean service checks continuously at the configured interval.
 - Private tracker: **https://upworkproposals.fera-tech.com** on Cloudflare Workers + D1.
   Its login lasts 30 days; the generated password is stored only in the local ignored
   `.tracker-credentials` file and encrypted Cloudflare Worker secrets.
@@ -93,8 +93,9 @@ Variables (simple comma lists).
 
 - **Job inbox:** every matching job actually sent to Telegram, with compact cards and full
   details in a tap-open drawer/bottom sheet.
-- **Applications:** generating a proposal automatically records the job as **Applied**. If you did
-  not send it, use **Didn't apply** so the job never pollutes conversion stats.
+- **Applications:** generating a proposal records **Draft ready**. Confirm **I applied** from
+  Telegram or mark **Applied** in the tracker only after submitting on Upwork; unsubmitted drafts
+  never pollute conversion stats.
 - **Pipeline:** Applied → Viewed → Replied → Interview → Won/Lost, with an immutable event
   history, notes, and labels.
 - **Search:** title, description, Upwork cipher/link, proposal, or labels. Pasting the complete
@@ -131,9 +132,8 @@ Repo → **Settings → Secrets and variables → Actions → Variables**:
 | `MAX_AGE_HOURS` | never notify jobs older than this | 24 |
 | `JOBS_PER_QUERY` | newest jobs fetched per search lane | 50 |
 | `CHECK_INTERVAL` | seconds between checks inside a run | 90 |
-| `LOOP_SECONDS` | how long each run loops before it exits | 630 |
 
-### Optional proxy (only if GitHub's IP gets blocked)
+### Optional proxy (only if the server IP gets blocked)
 If a run fails on the token/fetch: sign up free at **webshare.io**, copy the proxy-list
 **download link**, add it as the `WEBSHARE_URL` secret. (Direct currently works, so skip it.)
 
@@ -162,18 +162,18 @@ The notifier runs as `upwork-notifier.service` with its code under
 under `/etc/upwork-notifier`. The service has a 384 MB hard memory limit and does not
 share application files, databases, ports, or process ownership with Prime Truck.
 
-Deploy the current `main` commit using the manually triggered
-`Deploy notifier to DigitalOcean` workflow. GitHub Secrets remain the source of truth
-for Telegram, Gemini, OpenAI, tracker, proxy, and healthcheck credentials.
+Merging notifier, prompt, profile, dependency, or deployment changes into `main` runs the
+`Deploy notifier to DigitalOcean` workflow automatically. It can also be started manually.
+GitHub Secrets remain the source of truth for Telegram, Gemini, OpenAI, tracker, proxy, and
+healthcheck credentials.
 
 ## Troubleshooting
 - **No `visitor_gql_token` cookie / 403:** direct IP blocked → add the Webshare proxy secret.
 - **401 from GraphQL:** token expired mid-run; the next cron run refreshes it automatically.
 - **OpenAI `insufficient_quota`:** API billing is separate from ChatGPT. Check the API
   project's billing balance and usage limits, then replace `OPENAI_API_KEY` if needed.
-- **Secret was replaced but the bot still uses the old key:** push or manually dispatch the
-  workflow. Deploy/manual runs cancel the stale process; scheduled jobs reload secrets every
-  short cycle.
+- **Secret was replaced but the bot still uses the old key:** manually run the
+  `Deploy notifier to DigitalOcean` workflow so the service receives the updated GitHub Secret.
 - **Too many / too few pings:** adjust `min_score` and `search_queries` in `filters.json`.
 - **Schema drift:** if Upwork changes the GraphQL schema, `GRAPHQL_QUERY` in `notifier.py`
   is the one place to update.

@@ -1,0 +1,45 @@
+@font-face {
+  font-family: "Phosphor";
+  src: url("../node_modules/@phosphor-icons/web/src/regular/Phosphor.woff2") format("woff2");
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
+
+.ph {
+  font-family: "Phosphor" !important;
+  speak: never;
+  font-style: normal;
+  font-weight: normal;
+  font-variant: normal;
+  text-transform: none;
+  line-height: 1;
+  letter-spacing: 0;
+  font-feature-settings: "liga";
+  font-variant-ligatures: discretionary-ligatures;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.ph-arrow-counter-clockwise::before { content: "\e038"; }
+.ph-arrow-up-right::before { content: "\e092"; }
+.ph-caret-down::before { content: "\e136"; }
+.ph-caret-right::before { content: "\e13a"; }
+.ph-chart-bar::before { content: "\e150"; }
+.ph-chart-line-up::before { content: "\e156"; }
+.ph-chat-circle-dots::before { content: "\e16c"; }
+.ph-check-circle::before { content: "\e184"; }
+.ph-clipboard-text::before { content: "\e198"; }
+.ph-dots-three-circle::before { content: "\e200"; }
+.ph-eye::before { content: "\e220"; }
+.ph-file-text::before { content: "\e23a"; }
+.ph-lightbulb::before { content: "\e2dc"; }
+.ph-magnifying-glass::before { content: "\e30c"; }
+.ph-paper-plane-tilt::before { content: "\e398"; }
+.ph-skip-forward::before { content: "\e5a6"; }
+.ph-sliders-horizontal::before { content: "\e434"; }
+.ph-tray::before { content: "\e4aa"; }
+.ph-trophy::before { content: "\e67e"; }
+.ph-video-camera::before { content: "\e4da"; }
+.ph-x::before { content: "\e4f6"; }
+.ph-x-circle::before { content: "\e4f8"; }

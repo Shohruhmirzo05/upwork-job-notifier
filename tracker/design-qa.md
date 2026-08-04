@@ -72,8 +72,8 @@ No actionable P0/P1/P2 issues remain.
    - Evidence: the accepted live DOM exposes Last 30 days, July 2026, June 2026, May 2026, April 2026, 2026, All time, and Custom. Selecting May changed the live funnel from 17 July-period applications to 0 May applications and updated every rate and hook table from the same range.
    - Visual evidence: `design-qa-timeline-comparison.png` places the pre-change all-time view beside the accepted timeline view.
 2. [P1] Proposal generation required a redundant confirmation even though generation means the application was sent in the normal workflow.
-   - Fix: proposal generation now records Applied, sets the application timestamp, and includes it in analytics immediately. Didn't apply remains the explicit correction path and removes the record from performance calculations.
-   - Evidence: a disposable local job moved New → Applied on proposal generation, appeared in July analytics, then moved to Didn't apply and disappeared from the same range. No production job data was changed for this test.
+   - Fix: proposal generation records Draft ready, not Applied. The application enters analytics only after Shohruh confirms submission in Telegram or the tracker. Didn't apply remains an explicit correction path.
+   - Evidence: regression coverage verifies the Telegram Applied / Didn't apply controls, while the tracker ingest path keeps generated drafts unconfirmed until an application-confirmed event arrives.
 3. [P1] Multi-word search required all tokens and only covered a subset of stored fields.
    - Fix: search is now global across tabs, Unicode-aware, any-token matching, relevance-ranked, and covers title, brief, skills, matched terms, proposal, screening answers, budget, link, ID, tier, hook, status, labels, and notes.
    - Evidence: the deployed search `Airbridge completely-unrelated` returned the single Airbridge job despite the second token not matching. A disposable local record was also found from both its description and Cloudflare skill field while searching from the inbox tab after it had moved to Didn't apply.
@@ -83,6 +83,6 @@ No actionable P0/P1/P2 issues remain.
 
 ## Follow-up polish
 
-- [P3] The icon font package includes fallback font formats that increase deployed asset storage, although supported browsers download only the compressed WOFF2 resource.
+- [Fixed] The tracker now ships only the regular WOFF2 icon font and the 22 glyph mappings it uses. This also replaces the unsupported `ph-inbox` name with the visible `ph-tray` icon.
 
 final result: passed

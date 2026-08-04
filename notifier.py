@@ -2,7 +2,7 @@
 """
 Upwork -> Telegram recent-jobs notifier.
 
-Runs statelessly (built for GitHub Actions cron). Each run:
+Runs continuously under the DigitalOcean systemd service. Each scan:
   1. Grabs a visitor GraphQL token from upwork.com (curl_cffi Chrome TLS impersonation).
   2. Runs several SCOPED searches (search_queries in filters.json), newest-first, and
      merges + dedupes the results by job id. This beats scanning only the newest global
@@ -58,7 +58,7 @@ FILTERS_PATH = Path(os.environ.get("FILTERS_PATH", "filters.json"))
 TOKEN_PATH = Path(os.environ.get("TOKEN_PATH", ".token.json"))
 TOKEN_TTL_SEC = _int_env("TOKEN_TTL_SEC", 1500)  # reuse a cached visitor token ~25 min
 
-# ---- proposal drafting (optional; free Google Gemini). Empty key = disabled. ----
+# ---- proposal drafting (optional; Gemini with paid OpenAI fallback). ----
 # Proposals are ON DEMAND: each job card gets a "Generate Proposal" button; a draft is
 # only written (spending tokens) when you tap it. No key = the button is hidden.
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
@@ -507,7 +507,7 @@ def _tracker_job(job):
 def tracker_ingest(event, job, **extra):
     """Best-effort event delivery. The notifier remains fully functional if tracker is down."""
     if not TRACKER_API_URL or not TRACKER_API_TOKEN or not job.get("cipher"):
-        return
+        return False
     payload = {"event": event, "job": _tracker_job(job), **extra}
     try:
         r = requests.post(
@@ -516,8 +516,11 @@ def tracker_ingest(event, job, **extra):
         )
         if r.status_code >= 300:
             print(f"[warn] tracker {r.status_code}: {r.text[:160]}", file=sys.stderr)
+            return False
+        return True
     except Exception as e:
         print(f"[warn] tracker delivery failed: {e}", file=sys.stderr)
+        return False
 
 
 def send_plain(text):
@@ -579,6 +582,40 @@ def load_prompt_template():
         return ""
 
 
+def _proposal_mode(job):
+    """Choose agency/team voice only when the post clearly asks for a delivery team.
+
+    Ambiguous collaboration language defaults to an individual application. This prevents
+    ordinary "join our team" posts from turning into an unsolicited agency pitch.
+    """
+    text = " ".join([
+        str(job.get("title") or ""),
+        str(job.get("description") or ""),
+        " ".join(job.get("skills") or []),
+    ]).lower()
+    individual_signals = (
+        r"\bno agenc(?:y|ies)\b", r"\bagencies need not apply\b",
+        r"\bindividual(?: freelancer| contractor| developer)?s? only\b",
+        r"\bsolo developer\b", r"\bone developer\b", r"\bno subcontract(?:or|ing)s?\b",
+        r"\bwork directly with (?:the |a )?developer\b",
+    )
+    if any(re.search(pattern, text, re.I) for pattern in individual_signals):
+        return "individual"
+
+    team_signals = (
+        r"\b(?:looking for|need|seeking|hire|hiring) (?:an? )?(?:small |dedicated |full )?team\b",
+        r"\b(?:developer|engineer|freelancer) or (?:a )?(?:small |dedicated |full )?team\b",
+        r"\b(?:small|dedicated|full|development|engineering|product|dev) team (?:needed|required|wanted)\b",
+        r"\bteam of (?:developers|engineers|designers)\b",
+        r"\b(?:development|engineering|product) (?:agency|company|studio|partner)\b",
+        r"\b(?:agency|agencies) (?:welcome|preferred|only)\b",
+        r"\bapply as (?:an )?agency\b",
+        r"\b(?:two|three|four|[2-9]) (?:[a-z+#. -]+ )?(?:developers|engineers|freelancers)\b",
+        r"\bmultiple (?:developers|engineers|specialists|disciplines)\b",
+    )
+    return "team" if any(re.search(pattern, text, re.I) for pattern in team_signals) else "individual"
+
+
 def _fill_prompt(job, template):
     """Substitute the job's data into the proposal-brain template placeholders."""
     matched = ", ".join(job.get("matched", []) or [])
@@ -592,6 +629,7 @@ def _fill_prompt(job, template):
         "{{SCORE_AND_MATCHES}}": f"internal score {score}; matched keywords: {matched}"
                                  if matched else f"internal score {score}",
         "{{QUESTIONS}}": "(none provided — return only the cover letter, no screening answers)",
+        "{{APPLICATION_MODE}}": _proposal_mode(job),
     }
     out = template
     for k, v in subs.items():
@@ -601,9 +639,13 @@ def _fill_prompt(job, template):
 
 def _fallback_prompt(job):
     profile = load_profile()
+    mode = _proposal_mode(job)
     return (
-        "Write a first-person Upwork proposal for the freelancer below. Direct, confident, "
-        "hyphen bullets not asterisks, no emojis, no fabrication, ~180 words.\n\n"
+        "Write a warm, concise, first-person Upwork proposal for the freelancer below. Lead "
+        "with relevant proof or the client's outcome, not a lecture or a generic biography. "
+        "Use hyphen bullets only when needed, no emojis, no fabrication, 120-180 words.\n"
+        f"APPLICATION MODE: {mode}. In individual mode, never mention Fera Tech or an agency. "
+        "In team mode, say Shohruh will lead personally and mention Fera Tech once.\n\n"
         f"FREELANCER:\n{profile or '(a senior mobile & AI developer)'}\n\n"
         f"JOB\nTitle: {job['title']}\nBudget: {fmt_budget(job)}\n"
         f"Skills: {', '.join((job.get('skills') or [])[:10])}\n"
@@ -821,11 +863,12 @@ def generate_proposal(job):
     template = load_prompt_template()
     use_json = bool(template)
     prompt = _fill_prompt(job, template) if template else _fallback_prompt(job)
+    expected_mode = _proposal_mode(job)
     raw = _generate(prompt, json_mode=use_json)
     if not raw:
         return None
     for repair_attempt in range(2):
-        failures = _proposal_hard_failures(raw)
+        failures = _proposal_hard_failures(raw, expected_mode)
         if not failures:
             return raw
 
@@ -839,12 +882,17 @@ def generate_proposal(job):
             "by sentence. Keep every factual and output-format rule from the original brief.\n"
             f"FAILED CHECKS: {'; '.join(failures)}\n"
             "HARD REPAIR RULES:\n"
-            "- After 'Hi,' begin with the specific technical risk, first milestone, business outcome, "
-            "or a named shipped proof. Never begin with 'I can', 'I understand', 'I would', 'I'm', "
-            "'I am', or another self-introduction.\n"
+            "- After 'Hi,' begin warmly with a named shipped proof, the client's outcome, or a "
+            "practical first milestone. Use diagnostic language only for an audit, failure, recovery, "
+            "security, or compliance job. Never lecture or correct the client.\n"
+            "- Never use formulas such as 'the main risk is not', 'the key is not', 'lives or dies "
+            "on', 'before touching', or 'the hard part is'.\n"
+            f"- Required application mode is {expected_mode}. In individual mode, do not mention "
+            "Fera Tech, an agency, or 'our team'. In team mode, mention Fera Tech once and make clear "
+            "that Shohruh will lead the work personally.\n"
             "- Use one close portfolio project by default and at most two.\n"
             "- Keep all portfolio links below the preview paragraph.\n"
-            "- Keep a normal proposal between 140 and 210 words, and a complex proposal below 260.\n"
+            "- Keep a normal proposal between 120 and 180 words, and a complex proposal below 220.\n"
             "- Do not infer unverified features, tools, ownership, or specialist experience.\n"
             "- Never use self-disqualifying phrases such as 'I have not', 'I haven't', 'I don't "
             "have', 'I lack', 'no direct experience', or 'this would be new'. Lead with the closest "
@@ -860,7 +908,7 @@ def generate_proposal(job):
         if not raw:
             return None
 
-    final_failures = _proposal_hard_failures(raw)
+    final_failures = _proposal_hard_failures(raw, expected_mode)
     if final_failures:
         print(f"[error] proposal rejected after QA: {', '.join(final_failures)}",
               file=sys.stderr)
@@ -869,7 +917,7 @@ def generate_proposal(job):
     return raw
 
 
-def _proposal_hard_failures(raw):
+def _proposal_hard_failures(raw, expected_mode=None):
     """Return objective proposal failures that warrant one automatic rewrite."""
     cover = _extract_cover(raw)
     if not cover:
@@ -886,9 +934,35 @@ def _proposal_hard_failures(raw):
     if "http" in preview.lower():
         failures.append("portfolio link appears in preview")
 
+    harsh_formulas = (
+        r"\bthe (?:main|biggest|real|hardest) (?:risk|challenge|problem) is not\b",
+        r"\bthe key is not\b", r"\blives or dies (?:on|by)\b", r"\bbefore touching\b",
+        r"\bthe hard part is\b", r"\bnot copying\b", r"\byour budget (?:only )?works if\b",
+    )
+    if any(re.search(pattern, preview, re.I) for pattern in harsh_formulas):
+        failures.append("uses a confrontational or formulaic preview")
+
     word_count = len(re.findall(r"\b[\w'+.-]+\b", cover))
-    if word_count > 300:
+    if word_count > 240:
         failures.append(f"proposal is {word_count} words")
+
+    mode = expected_mode
+    try:
+        parsed = json.loads(re.search(r"\{.*\}", raw, re.DOTALL).group(0))
+        declared_mode = str(parsed.get("application_mode") or "").strip().lower()
+        if mode and declared_mode and declared_mode != mode:
+            failures.append(f"declares {declared_mode} instead of {mode} application mode")
+    except Exception:
+        declared_mode = ""
+    if mode == "individual" and re.search(
+            r"\b(?:Fera Tech|FERATECH|our (?:company|agency|studio|team)|we (?:can|will|would|have|built|deliver))\b",
+            cover, re.I):
+        failures.append("mentions a company or delivery team in individual mode")
+    if mode == "team":
+        if not re.search(r"\bFera Tech\b", cover, re.I):
+            failures.append("team mode does not mention Fera Tech")
+        if not re.search(r"\b(?:I(?:'ll| will| would) (?:personally )?lead|I will remain|I would remain|I am your lead)\b", cover, re.I):
+            failures.append("team mode does not say Shohruh will lead personally")
 
     names = (
         "Salom AI Business", "BandMate", "Launchcast", "CrisisPath", "Clove AI",
@@ -1142,9 +1216,13 @@ def _authorized(chat_id):
 
 
 def _proposal_buttons(cipher):
-    return {"inline_keyboard": [[
-        {"text": "❓ Answer screening questions", "callback_data": f"q:{cipher}"[:64]},
-    ]]}
+    return {"inline_keyboard": [
+        [
+            {"text": "✅ I applied", "callback_data": f"a:{cipher}"[:64]},
+            {"text": "🚫 Didn't apply", "callback_data": f"s:{cipher}"[:64]},
+        ],
+        [{"text": "❓ Answer screening questions", "callback_data": f"q:{cipher}"[:64]}],
+    ]}
 
 
 def _handle_callback(cq, store):
@@ -1185,6 +1263,20 @@ def _handle_callback(cq, store):
             if i == 0 and sent_id:
                 job["proposal_mid"] = sent_id       # answers will reply to this
             time.sleep(0.4)
+
+    elif data.startswith(("a:", "s:")):           # Confirm actual Upwork submission
+        cipher = data[2:]
+        job = store.get("jobs", {}).get(cipher) or {"cipher": cipher}
+        job.setdefault("cipher", cipher)
+        applied = data.startswith("a:")
+        event = "application_confirmed" if applied else "application_skipped"
+        if tracker_ingest(event, job):
+            label = "Application counted" if applied else "Marked as not applied"
+            answer_callback(cq.get("id", ""), label)
+            tg_reply(chat_id, mid, f"{'✅' if applied else '🚫'} {label} in your tracker.")
+        else:
+            answer_callback(cq.get("id", ""), "Tracker update failed")
+            tg_reply(chat_id, mid, "⚠️ I could not update the tracker. Please try again.")
 
     elif data.startswith("q:"):                     # Answer screening questions
         answer_callback(cq.get("id", ""), "Send me the questions")

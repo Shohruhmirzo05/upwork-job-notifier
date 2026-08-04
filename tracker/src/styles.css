@@ -790,7 +790,7 @@ button { cursor: pointer; }
 .funnel-list i { display: block; height: 100%; background: var(--blue); border-radius: 8px; }
 .funnel-list strong { text-align: right; }
 .hook-table { display: grid; }
-.hook-row { display: grid; grid-template-columns: minmax(100px, 1.4fr) repeat(3, .6fr); gap: 8px; padding: 12px 4px; font-size: 10px; text-align: right; border-top: 1px solid var(--line); }
+.hook-row { display: grid; grid-template-columns: minmax(100px, 1.4fr) repeat(4, .6fr); gap: 8px; padding: 12px 4px; font-size: 10px; text-align: right; border-top: 1px solid var(--line); }
 .hook-row > *:first-child { text-align: left; text-transform: capitalize; }
 .hook-row.head { padding-top: 0; color: var(--muted); border: 0; }
 .hook-row strong { color: var(--ink-soft); }
@@ -941,7 +941,7 @@ button { cursor: pointer; }
   .metric-grid article { min-width: 0; padding: 17px; }
   .metric-grid strong { font-size: 25px; }
   .panel { padding: 19px; }
-  .hook-row { grid-template-columns: minmax(90px, 1.2fr) repeat(3, .65fr); font-size: 9px; }
+  .hook-row { grid-template-columns: minmax(90px, 1.2fr) repeat(4, .65fr); font-size: 9px; }
   .login-shell { min-height: 100dvh; align-items: center; padding: max(20px, env(safe-area-inset-top)) 20px max(20px, env(safe-area-inset-bottom)); }
   .login-card { padding: 32px 24px; }
   .password-row { display: grid; }

@@ -2,6 +2,16 @@ name: Deploy notifier to DigitalOcean
 
 on:
   workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - "notifier.py"
+      - "filters.json"
+      - "profile.md"
+      - "proposal_prompt.md"
+      - "requirements.txt"
+      - "deploy/**"
+      - ".github/workflows/deploy-notifier.yml"
 
 permissions:
   contents: read

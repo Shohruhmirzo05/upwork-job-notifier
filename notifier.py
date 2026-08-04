@@ -1228,6 +1228,20 @@ def _proposal_buttons(cipher):
     ]}
 
 
+def _pipeline_buttons(cipher):
+    return {"inline_keyboard": [
+        [
+            {"text": "👁 Viewed", "callback_data": f"v:{cipher}"[:64]},
+            {"text": "💬 Replied", "callback_data": f"r:{cipher}"[:64]},
+        ],
+        [
+            {"text": "🎥 Interview", "callback_data": f"i:{cipher}"[:64]},
+            {"text": "🏆 Won", "callback_data": f"w:{cipher}"[:64]},
+        ],
+        [{"text": "✖️ Not hired", "callback_data": f"l:{cipher}"[:64]}],
+    ]}
+
+
 def _handle_callback(cq, store):
     msg = cq.get("message") or {}
     chat_id = (msg.get("chat") or {}).get("id")
@@ -1276,7 +1290,26 @@ def _handle_callback(cq, store):
         if tracker_ingest(event, job):
             label = "Application counted" if applied else "Marked as not applied"
             answer_callback(cq.get("id", ""), label)
-            tg_reply(chat_id, mid, f"{'✅' if applied else '🚫'} {label} in your tracker.")
+            tg_reply(chat_id, mid, f"{'✅' if applied else '🚫'} {label} in your tracker.",
+                     reply_markup=_pipeline_buttons(cipher) if applied else None)
+        else:
+            answer_callback(cq.get("id", ""), "Tracker update failed")
+            tg_reply(chat_id, mid, "⚠️ I could not update the tracker. Please try again.")
+
+    elif data.startswith(("v:", "r:", "i:", "w:", "l:")):  # Funnel update
+        cipher = data[2:]
+        job = store.get("jobs", {}).get(cipher) or {"cipher": cipher}
+        job.setdefault("cipher", cipher)
+        stages = {
+            "v:": ("application_viewed", "Viewed"),
+            "r:": ("application_replied", "Replied"),
+            "i:": ("application_interview", "Interview"),
+            "w:": ("application_won", "Won"),
+            "l:": ("application_lost", "Not hired"),
+        }
+        event, label = stages[data[:2]]
+        if tracker_ingest(event, job):
+            answer_callback(cq.get("id", ""), f"Tracker: {label}")
         else:
             answer_callback(cq.get("id", ""), "Tracker update failed")
             tg_reply(chat_id, mid, "⚠️ I could not update the tracker. Please try again.")

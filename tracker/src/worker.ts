@@ -151,6 +151,11 @@ async function ingest(request: Request, env: Env): Promise<Response> {
   const isGenerated = event === 'proposal_generated' && Boolean(proposal);
   const isConfirmed = event === 'application_confirmed';
   const isSkipped = event === 'application_skipped';
+  const stageEvents: Partial<Record<string, JobStatus>> = {
+    application_viewed: 'viewed', application_replied: 'replied',
+    application_interview: 'interview', application_won: 'won', application_lost: 'lost',
+  };
+  const stage = stageEvents[event];
   const now = new Date().toISOString();
 
   const current = await env.DB.prepare('SELECT status, applied_confirmed FROM jobs WHERE cipher = ?')
@@ -162,14 +167,20 @@ async function ingest(request: Request, env: Env): Promise<Response> {
   if (isGenerated && (!prior || prior === 'new' || prior === 'skipped')) next = 'generated';
   if (isConfirmed && (!prior || ['new', 'generated', 'skipped', 'applied'].includes(prior))) next = 'applied';
   if (isSkipped && canSkip) next = 'skipped';
-  const confirmed = isSkipped && canSkip ? 0 : (isConfirmed || reachedFunnel || Boolean(current?.applied_confirmed) ? 1 : 0);
+  if (stage) {
+    const rank: Partial<Record<JobStatus, number>> = { new: 0, generated: 0, skipped: 0, applied: 1, viewed: 2, replied: 3, interview: 4, won: 5 };
+    if (stage === 'lost' && prior !== 'won') next = 'lost';
+    else if (prior !== 'won' && prior !== 'lost' && (rank[stage] ?? 0) > (rank[prior ?? 'new'] ?? 0)) next = stage;
+  }
+  const confirmed = isSkipped && canSkip ? 0 : (isConfirmed || Boolean(stage) || reachedFunnel || Boolean(current?.applied_confirmed) ? 1 : 0);
 
   await env.DB.batch([
     env.DB.prepare(`
       INSERT INTO jobs (
         cipher,title,description,skills_json,matched_json,budget,link,publish_time,score,tier,
-        proposal,hook_type,screening_json,status,applied_confirmed,notified_at,generated_at,applied_at,skipped_at,created_at,updated_at
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        proposal,hook_type,screening_json,status,applied_confirmed,notified_at,generated_at,applied_at,
+        viewed_at,replied_at,interview_at,won_at,lost_at,skipped_at,created_at,updated_at
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(cipher) DO UPDATE SET
         title=CASE WHEN excluded.title != '' THEN excluded.title ELSE jobs.title END,
         description=CASE WHEN excluded.description != '' THEN excluded.description ELSE jobs.description END,
@@ -188,6 +199,11 @@ async function ingest(request: Request, env: Env): Promise<Response> {
         notified_at=COALESCE(jobs.notified_at,excluded.notified_at),
         generated_at=COALESCE(excluded.generated_at,jobs.generated_at),
         applied_at=COALESCE(jobs.applied_at,excluded.applied_at),
+        viewed_at=COALESCE(jobs.viewed_at,excluded.viewed_at),
+        replied_at=COALESCE(jobs.replied_at,excluded.replied_at),
+        interview_at=COALESCE(jobs.interview_at,excluded.interview_at),
+        won_at=COALESCE(jobs.won_at,excluded.won_at),
+        lost_at=COALESCE(jobs.lost_at,excluded.lost_at),
         skipped_at=COALESCE(excluded.skipped_at,jobs.skipped_at),
         updated_at=excluded.updated_at
     `).bind(
@@ -195,7 +211,10 @@ async function ingest(request: Request, env: Env): Promise<Response> {
       jsonArray(job.matched), stringValue(job.budget, 200), stringValue(job.link, 1000),
       stringValue(job.publish_time, 100) || null, Number(job.score) || 0, stringValue(job.tier, 100),
       proposal, hookType, jsonArray(screening), next, confirmed, event === 'notified' ? now : null,
-      isGenerated ? now : null, isConfirmed ? now : null, isSkipped ? now : null, now, now,
+      isGenerated ? now : null, isConfirmed || Boolean(stage) ? now : null,
+      stage === 'viewed' ? now : null, stage === 'replied' ? now : null,
+      stage === 'interview' ? now : null, stage === 'won' ? now : null,
+      stage === 'lost' ? now : null, isSkipped ? now : null, now, now,
     ),
     env.DB.prepare('INSERT INTO events (job_cipher,event_type,from_status,to_status,metadata_json) VALUES (?,?,?,?,?)')
       .bind(cipher, event, prior, next, JSON.stringify({ source: 'notifier', confirmed: Boolean(confirmed) })),

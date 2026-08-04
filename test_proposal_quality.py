@@ -201,6 +201,26 @@ class ProposalQualityTests(unittest.TestCase):
         self.assertNotIn("team mode does not mention Fera Tech", failures)
         self.assertNotIn("team mode does not say Shohruh will lead personally", failures)
 
+        alternate = (
+            "Hi,\n\nFera Tech can cover the mobile and backend work in parallel. I will serve "
+            "as your technical lead and remain accountable for delivery and communication."
+        )
+        self.assertNotIn(
+            "team mode does not say Shohruh will lead personally",
+            notifier._proposal_hard_failures(draft(alternate), "team"),
+        )
+
+    def test_fera_tech_is_not_counted_as_a_portfolio_project(self):
+        cover = (
+            "Hi,\n\nFera Tech can cover this build in parallel, and I'll personally lead it. "
+            "BandMate proves the realtime audio architecture, while Salom AI Business proves "
+            "the production AI workflow and deployment layer."
+        )
+        self.assertNotIn(
+            "uses 3 portfolio projects",
+            notifier._proposal_hard_failures(draft(cover), "team"),
+        )
+
     def test_proposal_buttons_require_application_confirmation(self):
         keyboard = notifier._proposal_buttons("~job123")["inline_keyboard"]
         callbacks = [button["callback_data"] for row in keyboard for button in row]

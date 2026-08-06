@@ -19,7 +19,7 @@ KillSignal=SIGTERM
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
 
-# Keep Prime Truck protected even if the notifier or a dependency misbehaves.
+# Keep Salom AI protected even if the notifier or a dependency misbehaves.
 MemoryHigh=300M
 MemoryMax=384M
 TasksMax=64

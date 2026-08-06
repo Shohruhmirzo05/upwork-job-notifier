@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # One-time bootstrap for the notifier. It deliberately does not touch nginx,
-# PostgreSQL, Redis, firewall rules, or any Prime Truck application files.
+# PostgreSQL, Redis, firewall rules, Docker, or any Salom AI application files.
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update

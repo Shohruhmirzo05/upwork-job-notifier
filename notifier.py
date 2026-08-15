@@ -616,6 +616,98 @@ def _proposal_mode(job):
     return "team" if any(re.search(pattern, text, re.I) for pattern in team_signals) else "individual"
 
 
+def _job_portfolio_signals(job):
+    """Classify job traits that change which portfolio proof is credible."""
+    text = " ".join([
+        str(job.get("title") or ""),
+        str(job.get("description") or ""),
+        " ".join(job.get("skills") or []),
+        " ".join(job.get("matched") or []),
+    ]).lower()
+    flutter = bool(re.search(r"\b(?:flutter|dart)\b", text))
+    react_native = bool(re.search(r"\breact[ -]?native\b|\bexpo(?:\.dev)?\b", text))
+    crisis = bool(re.search(
+        r"\b(?:crisis|emergency|safety|sos|panic|disaster|first responder|"
+        r"incident response|emergency response|personal security)\b", text))
+    wearable = bool(re.search(
+        r"\b(?:wearable|wearables|smartwatch|smart watch|watchos|wear os|apple watch)\b",
+        text,
+    ))
+    mobile = bool(re.search(
+        r"\b(?:mobile|ios|iphone|ipad|android|flutter|dart|react[ -]?native|expo|"
+        r"app store|google play|wearable|watchos|wear os)\b", text))
+    cross_platform = flutter or react_native or bool(re.search(
+        r"\bcross[ -]?platform\b|\b(?:ios|iphone)[^\n.]{0,90}\bandroid\b|"
+        r"\bandroid[^\n.]{0,90}\b(?:ios|iphone)\b|\bboth (?:mobile )?platforms\b",
+        text,
+    ))
+    dual_store = bool(
+        re.search(r"\bapp store\b[^\n.]{0,100}\bgoogle play\b", text)
+        or re.search(r"\bgoogle play\b[^\n.]{0,100}\bapp store\b", text)
+        or re.search(r"\b(?:ios|iphone)[^\n.]{0,90}\bandroid\b", text)
+        or re.search(r"\bandroid[^\n.]{0,90}\b(?:ios|iphone)\b", text)
+    )
+    native_ios = bool(re.search(
+        r"\b(?:swift|swiftui|uikit|xcode|widgetkit|app intents?|live activities|"
+        r"dynamic island|arkit|realitykit)\b", text)) and not cross_platform
+    return {
+        "flutter": flutter,
+        "react_native": react_native,
+        "crisis_mobile": crisis and mobile,
+        "wearable": wearable,
+        "cross_platform": cross_platform,
+        "dual_store": dual_store,
+        "native_ios": native_ios,
+    }
+
+
+def _portfolio_directive(job):
+    """Return deterministic, job-specific proof routing for every AI provider."""
+    signals = _job_portfolio_signals(job)
+    rules = ["Choose proof by the requested platform and product domain, not project recency."]
+    if signals["crisis_mobile"]:
+        rules.append(
+            "MANDATORY: lead with CrisisPath. It is the direct crisis/safety-domain Flutter "
+            "proof and is published on both iOS and Android. It must be the first named project."
+        )
+    elif signals["flutter"]:
+        rules.append(
+            "MANDATORY: use CrisisPath or BandMate as the primary proof. CrisisPath proves a "
+            "published iOS/Android Flutter release; BandMate proves current complex Flutter and "
+            "full-stack delivery."
+        )
+    elif signals["react_native"]:
+        rules.append(
+            "MANDATORY: prioritize cross-platform mobile experience. React Native and Expo are "
+            "verified working skills; use CrisisPath or BandMate as the named product proof "
+            "without relabeling either Flutter project as React Native."
+        )
+    elif signals["cross_platform"]:
+        rules.append("MANDATORY: use CrisisPath or BandMate as the primary cross-platform proof.")
+    elif signals["native_ios"]:
+        rules.append(
+            "Lead with Launchcast for native Swift/SwiftUI proof, unless another verified native "
+            "iOS project is a materially closer feature-domain match."
+        )
+    if signals["dual_store"]:
+        rules.append(
+            "CrisisPath must be included because it verifies delivery to both the App Store and "
+            "Google Play."
+        )
+    if signals["cross_platform"]:
+        rules.append(
+            "Do not lead with Launchcast. It is native SwiftUI and may appear only when a distinct "
+            "native Apple requirement cannot be proved by the cross-platform project."
+        )
+    if signals["wearable"]:
+        rules.append(
+            "No published wearable project is verified. Do not claim prior wearable delivery. "
+            "Use the closest mobile/domain proof, then frame watchOS/Wear OS as proposed "
+            "implementation and an early device/architecture validation milestone."
+        )
+    return "JOB-SPECIFIC PORTFOLIO DIRECTIVE:\n- " + "\n- ".join(rules)
+
+
 def _fill_prompt(job, template):
     """Substitute the job's data into the proposal-brain template placeholders."""
     matched = ", ".join(job.get("matched", []) or [])
@@ -630,6 +722,7 @@ def _fill_prompt(job, template):
                                  if matched else f"internal score {score}",
         "{{QUESTIONS}}": "(none provided — return only the cover letter, no screening answers)",
         "{{APPLICATION_MODE}}": _proposal_mode(job),
+        "{{PORTFOLIO_DIRECTIVE}}": _portfolio_directive(job),
     }
     out = template
     for k, v in subs.items():
@@ -646,6 +739,7 @@ def _fallback_prompt(job):
         "Use hyphen bullets only when needed, no emojis, no fabrication, 120-180 words.\n"
         f"APPLICATION MODE: {mode}. In individual mode, never mention Fera Tech or an agency. "
         "In team mode, say Shohruh will lead personally and mention Fera Tech once.\n\n"
+        f"{_portfolio_directive(job)}\n\n"
         f"FREELANCER:\n{profile or '(a senior mobile & AI developer)'}\n\n"
         f"JOB\nTitle: {job['title']}\nBudget: {fmt_budget(job)}\n"
         f"Skills: {', '.join((job.get('skills') or [])[:10])}\n"
@@ -868,7 +962,7 @@ def generate_proposal(job):
     if not raw:
         return None
     for repair_attempt in range(2):
-        failures = _proposal_hard_failures(raw, expected_mode)
+        failures = _proposal_hard_failures(raw, expected_mode, job)
         if not failures:
             return raw
 
@@ -908,7 +1002,7 @@ def generate_proposal(job):
         if not raw:
             return None
 
-    final_failures = _proposal_hard_failures(raw, expected_mode)
+    final_failures = _proposal_hard_failures(raw, expected_mode, job)
     if final_failures:
         print(f"[error] proposal rejected after QA: {', '.join(final_failures)}",
               file=sys.stderr)
@@ -917,7 +1011,7 @@ def generate_proposal(job):
     return raw
 
 
-def _proposal_hard_failures(raw, expected_mode=None):
+def _proposal_hard_failures(raw, expected_mode=None, job=None):
     """Return objective proposal failures that warrant one automatic rewrite."""
     cover = _extract_cover(raw)
     if not cover:
@@ -998,6 +1092,57 @@ def _proposal_hard_failures(raw, expected_mode=None):
             cover, re.I):
         failures.append("attributes an unverified maps feature to Launchcast")
 
+    if job:
+        signals = _job_portfolio_signals(job)
+        lower_cover = cover.lower()
+        has_crisispath = "crisispath" in lower_cover
+        has_cross_platform_proof = has_crisispath or "bandmate" in lower_cover
+        named_positions = {
+            name: lower_cover.find(name.lower())
+            for name in (
+                "Salom AI Business", "BandMate", "Launchcast", "CrisisPath", "Clove AI",
+                "Goby AI", "PicTrans", "QuarCade", "Kowl", "Karly", "Salom AI",
+            )
+            if name.lower() in lower_cover
+        }
+        first_named = min(named_positions, key=named_positions.get) if named_positions else ""
+        if signals["crisis_mobile"] and not has_crisispath:
+            failures.append("crisis/safety mobile job must lead with CrisisPath proof")
+        elif signals["crisis_mobile"] and first_named != "CrisisPath":
+            failures.append("crisis/safety mobile job names another project before CrisisPath")
+        if signals["flutter"] and not has_cross_platform_proof:
+            failures.append("Flutter job is missing CrisisPath or BandMate proof")
+        if signals["react_native"] and not has_cross_platform_proof:
+            failures.append("React Native/Expo job is missing cross-platform mobile proof")
+        if signals["cross_platform"] and "launchcast" in lower_cover and not has_cross_platform_proof:
+            failures.append("cross-platform job incorrectly uses Launchcast without Flutter proof")
+        elif (signals["cross_platform"] and "Launchcast" in named_positions
+              and first_named == "Launchcast"):
+            failures.append("cross-platform job incorrectly leads with Launchcast")
+        if signals["dual_store"] and not has_crisispath:
+            failures.append("dual-store job is missing published iOS/Android CrisisPath proof")
+        if signals["wearable"]:
+            wearable_claims = (
+                r"\bI\b[^.!?\n]{0,100}\b(?:built|shipped|published|released|delivered|"
+                r"developed|implemented)\b[^.!?\n]{0,100}\b(?:wearable|watchos|wear os|"
+                r"apple watch|smartwatch)\b",
+                r"\bmy\b[^.!?\n]{0,80}\b(?:wearable|watchos|wear os|apple watch|smartwatch)\b"
+                r"[^.!?\n]{0,80}\b(?:delivery|release|project|app|experience)\b",
+            )
+            if any(re.search(pattern, cover, re.I) for pattern in wearable_claims):
+                failures.append("claims unverified prior wearable delivery")
+
+    # BandMate is live on the App Store, while Android is still in its Google Play release
+    # process. Reject both the old all-mobile-preparation wording and an inflated Android claim.
+    if re.search(
+            r"\bBandMate\b[^.\n]{0,160}\bmobile apps?\b[^.\n]{0,80}"
+            r"\b(?:release preparation|not published)\b", cover, re.I):
+        failures.append("uses stale BandMate mobile publication status")
+    if re.search(
+            r"\bBandMate\b[^.\n]{0,180}\b(?:live|published|available|released)\s+"
+            r"(?:on|in|to)\s+(?:Google Play|Android)\b", cover, re.I):
+        failures.append("claims BandMate is already published on Google Play")
+
     questions = [line for line in cover.splitlines() if line.strip().endswith("?")]
     if len(questions) > 1:
         failures.append(f"uses {len(questions)} closing questions")
@@ -1017,6 +1162,7 @@ def generate_answers(job, questions):
         f"PROPOSAL ALREADY SENT FOR THIS JOB (make the answers match it):\n{proposal}\n\n"
         f"JOB:\nTitle: {job.get('title', '')}\n"
         f"Description: {(job.get('description') or '')[:1200]}\n\n"
+        f"{_portfolio_directive(job)}\n\n"
         f"CLIENT'S SCREENING QUESTIONS (there may be several in this text):\n{questions.strip()}\n\n"
         "Identify EACH distinct question and answer it separately.\n"
         "Return JSON only: {\"answers\":[{\"question\":\"...\",\"answer\":\"...\"}]}, one object "

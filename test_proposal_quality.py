@@ -145,6 +145,102 @@ class ProposalQualityTests(unittest.TestCase):
             notifier._proposal_hard_failures(draft(cover)),
         )
 
+    def test_crisis_flutter_job_requires_crisispath_instead_of_launchcast(self):
+        job = {
+            "title": "Flutter crisis response app with wearable support",
+            "description": (
+                "Build our safety app for iOS and Android, add Apple Watch and Wear OS support, "
+                "then publish through the App Store and Google Play."
+            ),
+            "skills": ["Flutter", "Dart", "iOS", "Android"],
+            "matched": ["mobile app"],
+        }
+        wrong = (
+            "Hi,\n\nLaunchcast proves my iOS release experience, including TestFlight and "
+            "App Store delivery. I would extend that process to the Android app."
+        )
+        failures = notifier._proposal_hard_failures(draft(wrong), "individual", job)
+        self.assertIn("crisis/safety mobile job must lead with CrisisPath proof", failures)
+        self.assertIn("Flutter job is missing CrisisPath or BandMate proof", failures)
+
+        wrong_order = (
+            "Hi,\n\nLaunchcast proves my App Store work, while CrisisPath proves Flutter "
+            "delivery across iOS and Android for a crisis-response product."
+        )
+        failures = notifier._proposal_hard_failures(draft(wrong_order), "individual", job)
+        self.assertIn(
+            "crisis/safety mobile job names another project before CrisisPath",
+            failures,
+        )
+        self.assertIn("cross-platform job incorrectly leads with Launchcast", failures)
+
+        relevant = (
+            "Hi,\n\nCrisisPath is the closest match: a production crisis-response Flutter "
+            "application I delivered on both iOS and Android. That work covered the existing "
+            "mobile codebase, backend-connected flows, testing, and both store releases."
+        )
+        failures = notifier._proposal_hard_failures(draft(relevant), "individual", job)
+        self.assertNotIn("crisis/safety mobile job must lead with CrisisPath proof", failures)
+        self.assertNotIn("dual-store job is missing published iOS/Android CrisisPath proof", failures)
+
+    def test_cross_platform_roles_reject_launchcast_only_proof(self):
+        job = {
+            "title": "React Native Expo developer",
+            "description": "Complete a cross-platform iOS and Android marketplace app.",
+            "skills": ["React Native", "Expo"],
+            "matched": [],
+        }
+        wrong = "Hi,\n\nLaunchcast is my closest mobile example and is live on the App Store."
+        failures = notifier._proposal_hard_failures(draft(wrong), "individual", job)
+        self.assertIn("React Native/Expo job is missing cross-platform mobile proof", failures)
+        self.assertIn("cross-platform job incorrectly uses Launchcast without Flutter proof", failures)
+
+    def test_wearable_jobs_reject_unverified_past_delivery_claims(self):
+        job = {
+            "title": "Flutter wearable safety app",
+            "description": "Add Apple Watch and Wear OS support to an iOS and Android app.",
+            "skills": ["Flutter"],
+            "matched": [],
+        }
+        cover = (
+            "Hi,\n\nCrisisPath proves the crisis-response Flutter and dual-store work. "
+            "I built and shipped an Apple Watch wearable app with the same workflow."
+        )
+        self.assertIn(
+            "claims unverified prior wearable delivery",
+            notifier._proposal_hard_failures(draft(cover), "individual", job),
+        )
+
+    def test_bandmate_publication_status_is_current_and_guarded(self):
+        stale = (
+            "Hi,\n\nBandMate is a Flutter voice platform whose mobile apps are in release "
+            "preparation, not published."
+        )
+        inflated = "Hi,\n\nBandMate is now published on Google Play and supports production voice."
+        self.assertIn(
+            "uses stale BandMate mobile publication status",
+            notifier._proposal_hard_failures(draft(stale)),
+        )
+        self.assertIn(
+            "claims BandMate is already published on Google Play",
+            notifier._proposal_hard_failures(draft(inflated)),
+        )
+
+    def test_job_specific_portfolio_directive_is_injected(self):
+        job = {
+            "title": "Emergency Flutter app",
+            "description": "Ship an iOS and Android crisis app with wearable support.",
+            "skills": ["Flutter", "Wear OS"],
+            "matched": [],
+            "score": 90,
+            "job_type": "FIXED",
+            "fixed": 2000,
+        }
+        prompt = notifier._fill_prompt(job, "{{PORTFOLIO_DIRECTIVE}}")
+        self.assertIn("MANDATORY: lead with CrisisPath", prompt)
+        self.assertIn("Do not lead with Launchcast", prompt)
+        self.assertIn("Do not claim prior wearable delivery", prompt)
+
     def test_team_mode_is_conservative(self):
         individual_jobs = (
             {"title": "Senior Flutter Developer", "description": "Join our team and collaborate with our designer."},

@@ -65,6 +65,12 @@ Silently determine all of the following:
 
 Do not simply mirror keywords from the post. Show understanding by connecting a requirement to a decision, risk, deliverable, or verified result.
 
+MANDATORY JOB-SPECIFIC PROOF ROUTING:
+{{PORTFOLIO_DIRECTIVE}}
+
+The routing above is selected by code before generation. It overrides generic portfolio preferences.
+Do not substitute a more recent or more impressive project for the required platform/domain proof.
+
 CAPABILITY FIT GATE:
 - Separate "I have shipped this" from "I can implement this in the requested stack." Past-tense experience must be explicitly supported by the verified profile.
 - Never infer an unlisted feature from a project's general category. For example, do not claim Launchcast has maps, Kowl is a marketplace, or any app used a requested framework unless that fact is explicitly verified below.
@@ -125,9 +131,9 @@ PROOF RULES:
 - Do not dump tools or every feature from a project. Select the 1-3 facts that answer this job.
 - Default to one close proof. Add a second only when it verifies a different mandatory part of the job.
 - Quantified claims may be used only as written in the verified profile.
-- For BandMate, say the backend/admin are live and mobile is in release preparation when publication status matters. Never say it is live in the App Store or Google Play.
+- For BandMate, say the backend/admin and iOS App Store app are live when publication status matters. Android is in the Google Play release process and is not yet published there.
 - For Salom AI Business, describe the business automation, RAG, CRM/operations, payments, or integrations relevant to the post. Do not mention Telegram unless the job specifically asks for it.
-- If asked for several published Flutter apps, be transparent: CrisisPath is the strongest published Flutter example; BandMate is a production-stage Flutter/full-stack platform in release preparation; Salom AI Android is also in final testing/release preparation.
+- If asked for several published Flutter apps, be transparent: CrisisPath is published on iOS and Android; BandMate is published on iOS while Android is in the Google Play release process; Salom AI Android is in final testing/release preparation.
 - Karly has no approved public link. Mention it only when its scale is directly useful, and do not invent a link.
 
 CLIENT-CENTERED STRUCTURE:
@@ -181,8 +187,10 @@ EXECUTION PLAN RULES:
 PORTFOLIO KNOWLEDGE:
 
 1. BandMate
-Type: Flutter + FastAPI/PostgreSQL/Redis AI voice and EdTech platform
-Link: https://bandmate.uz/
+Type: Flutter + FastAPI/PostgreSQL/Redis AI voice and EdTech platform, published on iOS
+Links:
+https://bandmate.uz/
+https://apps.apple.com/us/app/bandmate-ai-speak-english/id6790634392
 Use for: Flutter, AI voice, realtime conversation, STT/TTS, WebSockets, OpenAI Realtime, ElevenLabs, multilingual AI, EdTech, IELTS, personalization/memory, subscriptions, admin panels, CI/CD, production backend architecture.
 Verified facts:
 - AI English-speaking companion designed for Uzbek learners.
@@ -192,7 +200,9 @@ Verified facts:
 - Personalized learning uses onboarding, level, mistakes, history, summaries, and recent progress.
 - IELTS Speaking Parts 1-3, full mock exams, roleplay, grammar/pronunciation feedback.
 - Authentication, subscriptions/payments, admin platform, Docker, and automated CI/CD.
-- Backend and admin are live; mobile apps are in release preparation, not published stores.
+- Backend and admin are live.
+- The Flutter iOS app is published on the App Store.
+- Android is in the Google Play release process and must not yet be called published there.
 
 2. Salom AI Business
 Type: Production B2B AI chatbot/operator, multi-tenant RAG, CRM/operations, integrations, web/backend
@@ -244,10 +254,10 @@ Links:
 https://www.crisispath.com/
 https://apps.apple.com/ru/app/crisis-path/id6754632278
 https://play.google.com/store/apps/details?id=com.CrisisPath.app
-Use for: Flutter, Dart, cross-platform, existing codebases, backend-connected mobile flows, subscriptions, production debugging, store release, iOS/Android QA.
+Use for: crisis/safety/emergency mobile products, Flutter, Dart, cross-platform, existing codebases, backend-connected mobile flows, subscriptions, production debugging, store release, iOS/Android QA.
 Verified facts:
-- Published production Flutter application on iOS and Android.
-- Existing-codebase improvements, feature delivery, subscriptions, debugging, tests, deployment, and release work.
+- Published production crisis-response and safety Flutter application on iOS and Android.
+- Shohruh built and delivered work across the existing mobile codebase, feature delivery, subscriptions, debugging, tests, deployment, and release work.
 
 6. Clove AI
 Type: Published iOS AI smart-kitchen app
@@ -323,7 +333,18 @@ Flutter / Android / cross-platform:
 - Use CrisisPath for published Flutter proof.
 - Use BandMate for modern Flutter plus full-stack/voice complexity.
 - Use Salom AI Android only as release-preparation proof.
-- Be transparent about publication status.
+- Never lead with Launchcast unless the post's central requirement is explicitly native Apple work.
+- Be transparent that BandMate is live on iOS while Android is still in its Google Play release process.
+
+Crisis / safety / emergency mobile:
+- Lead with CrisisPath. It is the exact domain match and the published Flutter iOS/Android proof.
+- Add BandMate only if a second proof is needed for current Flutter architecture, realtime audio, backend, or release-process depth.
+- Do not replace CrisisPath with Launchcast merely because the post mentions iOS, the App Store, or Apple devices.
+
+React Native / Expo:
+- React Native and Expo are verified working skills.
+- Use CrisisPath or BandMate as the named cross-platform mobile proof, and describe implementation in React Native/Expo without relabeling either Flutter project.
+- Do not lead with Launchcast for a React Native/Expo role unless the client separately requires a specific native Apple capability.
 
 AI voice / speech / realtime / conversational learning:
 - Lead with BandMate.

@@ -42,5 +42,4 @@ jobs:
       - name: Run regression tests
         run: python -m unittest -q
       - name: Verify OpenAI fallback credentials
-        continue-on-error: true
         run: python notifier.py --check-openai

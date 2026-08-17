@@ -21,6 +21,7 @@ class WorkflowRuntimeTests(unittest.TestCase):
         self.assertIn("Verify OpenAI fallback credentials", CHECK_WORKFLOW)
         self.assertIn("python notifier.py --check-openai", CHECK_WORKFLOW)
         self.assertIn("OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}", CHECK_WORKFLOW)
+        self.assertNotIn("continue-on-error: true", CHECK_WORKFLOW)
         self.assertIn("branches: [main]", DEPLOY_WORKFLOW)
         self.assertIn("DEPLOY_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}", DEPLOY_WORKFLOW)
         self.assertNotRegex(

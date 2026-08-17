@@ -904,7 +904,8 @@ def _openai_generate(prompt, json_mode=False, max_tokens=8192):
         body["reasoning_effort"] = OPENAI_REASONING
     if json_mode:
         body["response_format"] = {"type": "json_object"}
-    for attempt in range(3):
+    max_attempts = 5
+    for attempt in range(max_attempts):
         try:
             r = requests.post("https://api.openai.com/v1/chat/completions",
                               headers={"Authorization": f"Bearer {OPENAI_API_KEY}",
@@ -916,7 +917,7 @@ def _openai_generate(prompt, json_mode=False, max_tokens=8192):
                 if text:
                     return text
                 _record_ai_failure("OpenAI", "empty")
-                if attempt < 2:
+                if attempt < max_attempts - 1:
                     time.sleep(2 ** attempt)
                     continue
                 return None
@@ -930,8 +931,16 @@ def _openai_generate(prompt, json_mode=False, max_tokens=8192):
                 kind = "insufficient_quota" if code == "insufficient_quota" else "rate_limit"
                 _record_ai_failure("OpenAI", kind, code)
                 print(f"[warn] openai HTTP 429 ({kind})", file=sys.stderr)
-                if kind == "rate_limit" and attempt < 2:
-                    time.sleep(2 ** attempt)
+                if kind == "rate_limit" and attempt < max_attempts - 1:
+                    headers = getattr(r, "headers", {}) or {}
+                    retry_after = headers.get("retry-after") or headers.get("Retry-After")
+                    try:
+                        delay = float(retry_after)
+                    except (TypeError, ValueError):
+                        delay = (3, 7, 15, 30)[attempt]
+                    delay = min(30, max(1, delay))
+                    print(f"[info] retrying OpenAI after {delay:g}s", file=sys.stderr)
+                    time.sleep(delay)
                     continue
                 return None
             if r.status_code == 401:
@@ -941,14 +950,14 @@ def _openai_generate(prompt, json_mode=False, max_tokens=8192):
             else:
                 _record_ai_failure("OpenAI", "unavailable", f"HTTP {r.status_code}")
             print(f"[warn] openai HTTP {r.status_code}: {r.text[:200]}", file=sys.stderr)
-            if r.status_code >= 500 and attempt < 2:
+            if r.status_code >= 500 and attempt < max_attempts - 1:
                 time.sleep(2 ** attempt)
                 continue
             return None
         except Exception as e:
             _record_ai_failure("OpenAI", "unavailable", type(e).__name__)
             print(f"[warn] openai error: {e}", file=sys.stderr)
-            if attempt < 2:
+            if attempt < max_attempts - 1:
                 time.sleep(2 ** attempt)
                 continue
             return None

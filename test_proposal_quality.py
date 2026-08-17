@@ -16,10 +16,11 @@ import notifier
 
 
 class FakeResponse:
-    def __init__(self, status_code, payload=None, text=""):
+    def __init__(self, status_code, payload=None, text="", headers=None):
         self.status_code = status_code
         self._payload = payload or {}
         self.text = text or json.dumps(self._payload)
+        self.headers = headers or {}
 
     def json(self):
         return self._payload
@@ -148,6 +149,22 @@ class ProposalQualityTests(unittest.TestCase):
         with patch.object(notifier, "OPENAI_API_KEY", "test-key"):
             self.assertEqual(notifier._openai_generate("test", max_tokens=32), "OK")
         self.assertEqual(post.call_count, 2)
+
+    @patch("notifier.time.sleep")
+    @patch("notifier.requests.post", create=True)
+    def test_openai_waits_through_a_full_temporary_rate_limit_window(self, post, sleep):
+        post.side_effect = [
+            FakeResponse(429, {"error": {"code": "rate_limit_exceeded"}}),
+            FakeResponse(429, {"error": {"code": "rate_limit_exceeded"}}),
+            FakeResponse(429, {"error": {"code": "rate_limit_exceeded"}}),
+            FakeResponse(429, {"error": {"code": "rate_limit_exceeded"}}),
+            FakeResponse(200, {"choices": [{"message": {"content": "OK"}}]}),
+        ]
+        with patch.object(notifier, "OPENAI_API_KEY", "test-key"):
+            self.assertEqual(notifier._openai_generate("test", max_tokens=32), "OK")
+
+        self.assertEqual(post.call_count, 5)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [3, 7, 15, 30])
 
     @patch("notifier.requests.post", create=True)
     def test_openai_quota_is_reported_after_gemini_fallback(self, post):

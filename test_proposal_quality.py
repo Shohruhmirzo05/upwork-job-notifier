@@ -179,6 +179,22 @@ class ProposalQualityTests(unittest.TestCase):
         self.assertIn("billing quota", notifier._ai_failure_message("a proposal"))
         self.assertEqual(post.call_count, 2)
 
+    @patch("notifier.time.sleep")
+    @patch("notifier.requests.post", create=True)
+    def test_openai_credit_balance_exhausted_is_not_retried(self, post, sleep):
+        post.return_value = FakeResponse(429, {
+            "error": {
+                "code": "credit_balance_exhausted",
+                "type": "insufficient_quota",
+            }
+        })
+        with patch.object(notifier, "OPENAI_API_KEY", "test-key"):
+            self.assertIsNone(notifier._openai_generate("test", max_tokens=32))
+
+        self.assertEqual(post.call_count, 1)
+        sleep.assert_not_called()
+        self.assertIn("billing quota", notifier._ai_failure_message("a proposal"))
+
     @patch("notifier.requests.post", create=True)
     def test_openai_successfully_backs_up_gemini(self, post):
         post.side_effect = [

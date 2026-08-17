@@ -928,7 +928,11 @@ def _openai_generate(prompt, json_mode=False, max_tokens=8192):
                 error = {}
             code = str(error.get("code") or "")
             if r.status_code == 429:
-                kind = "insufficient_quota" if code == "insufficient_quota" else "rate_limit"
+                error_type = str(error.get("type") or "")[:60]
+                quota_codes = {"insufficient_quota", "credit_balance_exhausted"}
+                kind = ("insufficient_quota"
+                        if code in quota_codes or error_type == "insufficient_quota"
+                        else "rate_limit")
                 response_headers = getattr(r, "headers", {}) or {}
                 diagnostics = []
                 for name in (
@@ -940,7 +944,6 @@ def _openai_generate(prompt, json_mode=False, max_tokens=8192):
                     value = response_headers.get(name) or response_headers.get(name.title())
                     if value is not None:
                         diagnostics.append(f"{name}={str(value)[:40]}")
-                error_type = str(error.get("type") or "")[:60]
                 detail = ", ".join(filter(None, [f"code={code}" if code else "",
                                                   f"type={error_type}" if error_type else "",
                                                   *diagnostics]))

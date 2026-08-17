@@ -1,7 +1,9 @@
 import json
 import sys
+import tempfile
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 # Proposal QA does not make network calls. Stub the optional runtime HTTP dependency so
@@ -28,6 +30,106 @@ def draft(cover_letter):
 
 
 class ProposalQualityTests(unittest.TestCase):
+    def test_dedupe_survives_rotated_upwork_ciphertext(self):
+        original = {
+            "job_id": "stable-123",
+            "cipher": "~old-cipher",
+            "title": "Flutter Crisis Safety App",
+            "publish": "2026-08-17T08:00:00Z",
+        }
+        rotated = {**original, "cipher": "~new-cipher"}
+        seen = {key: 9_999_999_999 for key in notifier._seen_keys(original)}
+
+        self.assertEqual(notifier._job_identity(original), notifier._job_identity(rotated))
+        self.assertTrue(notifier._was_seen(rotated, seen))
+
+    def test_fingerprint_dedupes_when_stable_id_is_missing(self):
+        original = {
+            "cipher": "~old-cipher",
+            "title": "Flutter Crisis Safety App",
+            "description": "Build a mobile safety workflow.",
+            "publish": "2026-08-17T08:00:00Z",
+        }
+        rotated = {**original, "cipher": "~new-cipher"}
+        seen = {key: 9_999_999_999 for key in notifier._seen_keys(original)}
+
+        self.assertTrue(notifier._was_seen(rotated, seen))
+
+    def test_corrupt_seen_state_reseeds_instead_of_replaying_jobs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "seen.json"
+            path.write_text("{truncated")
+            with patch.object(notifier, "SEEN_PATH", path):
+                self.assertIsNone(notifier.load_seen())
+                notifier.save_seen({"id:stable-123": 9_999_999_999})
+                self.assertEqual(notifier.load_seen(), {"id:stable-123": 9_999_999_999})
+
+    def test_parse_job_retains_stable_upwork_id(self):
+        parsed = notifier.parse_job({
+            "id": "result-123",
+            "title": "Flutter app",
+            "description": "",
+            "ontologySkills": [],
+            "jobTile": {"job": {"id": "job-123", "ciphertext": "~cipher"}},
+        })
+        self.assertEqual(parsed["job_id"], "job-123")
+        self.assertEqual(parsed["cipher"], "~cipher")
+
+    def test_backfill_window_is_limited_to_two_hours(self):
+        self.assertEqual(notifier.MAX_AGE_HOURS, 2)
+        self.assertEqual(notifier.MAX_BURST_NOTIFS, 8)
+
+    def test_legacy_seen_state_migrates_without_sending(self):
+        job = {
+            "job_id": "stable-123", "cipher": "~new-cipher", "title": "Flutter app",
+            "description": "", "skills": ["Flutter"], "job_type": "FIXED",
+            "hourly_min": None, "hourly_max": None, "fixed": 1000, "tier": "Intermediate",
+            "publish": "", "link": "https://www.upwork.com/jobs/~new-cipher",
+        }
+        cfg = {"hot_min": 60, "good_min": 30, "search_queries": ["flutter"]}
+        legacy_seen = {"~old-cipher": 9_999_999_999}
+        with patch("notifier.get_token", return_value="token"), \
+                patch("notifier.fetch_all_jobs", return_value=[job]), \
+                patch("notifier.score_job", return_value=(True, 30, ["flutter"])), \
+                patch("notifier.load_seen", return_value=legacy_seen), \
+                patch("notifier.save_seen") as save_seen, \
+                patch("notifier.send") as send, \
+                patch("notifier.ping_healthcheck"):
+            notifier.run_job_check(cfg, None)
+
+        send.assert_not_called()
+        save_seen.assert_called_once()
+        self.assertIn("id:stable-123", legacy_seen)
+
+    def test_notification_burst_overflow_is_not_replayed(self):
+        jobs = []
+        for index in range(10):
+            jobs.append({
+                "job_id": f"stable-{index}", "cipher": f"~cipher-{index}",
+                "title": f"Flutter app {index}", "description": "", "skills": ["Flutter"],
+                "job_type": "FIXED", "hourly_min": None, "hourly_max": None,
+                "fixed": 1000, "tier": "Intermediate", "publish": "",
+                "link": f"https://www.upwork.com/jobs/~cipher-{index}",
+            })
+        cfg = {"hot_min": 60, "good_min": 30, "search_queries": ["flutter"]}
+        seen = {"id:existing": 9_999_999_999}
+        with patch("notifier.get_token", return_value="token"), \
+                patch("notifier.fetch_all_jobs", return_value=jobs), \
+                patch("notifier.score_job", return_value=(True, 30, ["flutter"])), \
+                patch("notifier.load_seen", return_value=seen), \
+                patch("notifier.save_seen"), \
+                patch("notifier.load_store", return_value={"offset": 0, "jobs": {}}), \
+                patch("notifier.save_store"), \
+                patch("notifier.send", return_value=True) as send, \
+                patch("notifier.tracker_ingest"), \
+                patch("notifier.ping_healthcheck"), \
+                patch("notifier.time.sleep"):
+            notifier.run_job_check(cfg, None)
+
+        self.assertEqual(send.call_count, 8)
+        for index in range(10):
+            self.assertIn(f"id:stable-{index}", seen)
+
     @patch("notifier._generate", return_value=None)
     def test_provider_failure_does_not_trigger_qa_retries(self, generate):
         self.assertIsNone(notifier.generate_proposal({

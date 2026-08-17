@@ -8,7 +8,7 @@ Runs continuously under the DigitalOcean systemd service. Each scan:
      merges + dedupes the results by job id. This beats scanning only the newest global
      jobs — you get deep coverage of your niche instead of a shallow slice of everything.
   3. Scores each job with a LOCAL, zero-cost weighted-keyword engine (filters.json).
-  4. Dedupes against seen.json (committed back by the workflow).
+  4. Dedupes against crash-safe persistent seen.json state on the server.
   5. Sends each genuinely-new job scoring >= min_score to Telegram, tagged HOT/GOOD/MAYBE,
      best score first.
 
@@ -19,6 +19,8 @@ Method credit: adapted from asaniczka/Upwork-Job-Scraper (public GraphQL + visit
 token). Never logs in as you — only public listings — so your account stays out of it.
 """
 
+import fcntl
+import hashlib
 import json
 import os
 import random
@@ -51,9 +53,11 @@ MAX_PAGES = _int_env("MAX_PAGES", 2)          # only used if no search_queries
 PAGE_SIZE = 50
 JOBS_PER_QUERY = _int_env("JOBS_PER_QUERY", 50)  # newest N per search lane
 MAX_NOTIFS = _int_env("MAX_NOTIFS", 25)       # cap per run to avoid flood
-MAX_AGE_HOURS = _int_env("MAX_AGE_HOURS", 24)  # never notify jobs older than this (0 = off)
+MAX_BURST_NOTIFS = _int_env("MAX_BURST_NOTIFS", 8)  # hard per-scan Telegram burst ceiling
+MAX_AGE_HOURS = _int_env("MAX_AGE_HOURS", 2)  # skip stale recovery/backfill jobs (0 = off)
 SEEN_TTL_DAYS = _int_env("SEEN_TTL_DAYS", 7)
 SEEN_PATH = Path(os.environ.get("SEEN_PATH", "seen.json"))
+LOCK_PATH = Path(os.environ.get("LOCK_PATH", "notifier.lock"))
 FILTERS_PATH = Path(os.environ.get("FILTERS_PATH", "filters.json"))
 TOKEN_PATH = Path(os.environ.get("TOKEN_PATH", ".token.json"))
 TOKEN_TTL_SEC = _int_env("TOKEN_TTL_SEC", 1500)  # reuse a cached visitor token ~25 min
@@ -339,9 +343,11 @@ def fetch_page(token, proxy, offset, user_query="", count=PAGE_SIZE, tries=3):
 def parse_job(r):
     job = (r.get("jobTile") or {}).get("job") or {}
     cipher = job.get("ciphertext") or ""
+    job_id = str(job.get("id") or r.get("id") or "").strip()
     skills = [s.get("prefLabel", "") for s in (r.get("ontologySkills") or []) if s.get("prefLabel")]
     return {
         "cipher": cipher,
+        "job_id": job_id,
         "title": r.get("title") or "Untitled",
         "description": r.get("description") or "",
         "skills": skills,
@@ -355,10 +361,63 @@ def parse_job(r):
     }
 
 
+def _job_fingerprint(job):
+    """Stable fallback identity when Upwork rotates an opaque link ciphertext."""
+    title = re.sub(r"\s+", " ", str(job.get("title") or "").strip().casefold())
+    publish = str(job.get("publish") or "").strip()
+    if not title:
+        return ""
+    if not publish:
+        description = re.sub(
+            r"\s+", " ", str(job.get("description") or "").strip().casefold()
+        )[:300]
+        publish = description
+    digest = hashlib.sha256(f"{title}|{publish}".encode("utf-8")).hexdigest()
+    return f"fp:{digest}"
+
+
+def _job_identity(job):
+    """Primary identity for in-memory merging and overflow tracking."""
+    job_id = str(job.get("job_id") or "").strip()
+    return f"id:{job_id}" if job_id else (_job_fingerprint(job) or job.get("cipher", ""))
+
+
+def _seen_keys(job):
+    """All backward-compatible identities that can prove a job was already handled."""
+    keys = set()
+    job_id = str(job.get("job_id") or "").strip()
+    cipher = str(job.get("cipher") or "").strip()
+    fingerprint = _job_fingerprint(job)
+    if job_id:
+        keys.add(f"id:{job_id}")
+    if cipher:
+        keys.add(cipher)  # legacy seen.json entries used raw ciphertext
+        keys.add(f"cipher:{cipher}")
+    if fingerprint:
+        keys.add(fingerprint)
+    return keys
+
+
+def _was_seen(job, seen):
+    return any(key in seen for key in _seen_keys(job))
+
+
+def _acquire_instance_lock():
+    """Prevent a manual/accidental second notifier process from sending duplicate cards."""
+    LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    handle = LOCK_PATH.open("a+")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        handle.close()
+        raise SystemExit("[error] another notifier process already holds the instance lock")
+    return handle
+
+
 def fetch_all_jobs(token, proxy, cfg):
     """Run each search_query newest-first, merge, and dedupe by job id.
     Falls back to newest-global pages if no search_queries are configured."""
-    by_cipher = {}
+    by_identity = {}
     queries = [q for q in (cfg.get("search_queries") or []) if q]
 
     if queries:
@@ -368,7 +427,7 @@ def fetch_all_jobs(token, proxy, cfg):
                 for r in results:
                     j = parse_job(r)
                     if j["cipher"]:
-                        by_cipher.setdefault(j["cipher"], j)
+                        by_identity.setdefault(_job_identity(j), j)
                 print(f"[info] lane {q!r}: {len(results)} results")
             except Exception as e:
                 print(f"[warn] lane {q!r} failed: {e}", file=sys.stderr)
@@ -379,11 +438,11 @@ def fetch_all_jobs(token, proxy, cfg):
                 for r in fetch_page(token, proxy, offset):
                     j = parse_job(r)
                     if j["cipher"]:
-                        by_cipher.setdefault(j["cipher"], j)
+                        by_identity.setdefault(_job_identity(j), j)
             except Exception as e:
                 print(f"[warn] page offset {offset} failed: {e}", file=sys.stderr)
 
-    return list(by_cipher.values())
+    return list(by_identity.values())
 
 
 # ---------- telegram ----------
@@ -1314,16 +1373,30 @@ def load_seen():
     if not SEEN_PATH.exists():
         return None  # first run
     try:
-        return json.loads(SEEN_PATH.read_text())
-    except Exception:
-        return {}
+        seen = json.loads(SEEN_PATH.read_text())
+        return seen if isinstance(seen, dict) else None
+    except Exception as e:
+        # Fail closed. An empty dict would replay every matching job after a partial/corrupt
+        # write; None tells run_job_check to reseed silently instead.
+        print(f"[warn] seen state unreadable ({e}); reseeding without notifications",
+              file=sys.stderr)
+        return None
 
 
 def save_seen(seen):
     now = time.time()
     cutoff = now - SEEN_TTL_DAYS * 86400
     pruned = {k: v for k, v in seen.items() if v > cutoff}
-    SEEN_PATH.write_text(json.dumps(pruned, indent=0))
+    SEEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temporary = SEEN_PATH.with_name(f".{SEEN_PATH.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(json.dumps(pruned, separators=(",", ":")))
+        os.replace(temporary, SEEN_PATH)
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 def load_store():
@@ -1575,16 +1648,28 @@ def run_job_check(cfg, proxy):
     now = time.time()
 
     if seen is None:  # first run: seed silently
-        seed = {j["cipher"]: now for j in jobs if j["cipher"]}
+        seed = {key: now for job in jobs for key in _seen_keys(job)}
         save_seen(seed)
-        send_plain(f"✅ Upwork notifier armed. Watching {len(seed)} jobs across "
+        send_plain(f"✅ Upwork notifier armed. Watching {len(jobs)} jobs across "
                    f"{len(cfg.get('search_queries') or [])} search lanes. "
                    f"You'll get HOT/GOOD/MAYBE pings for new matching jobs.")
         print("[info] seeded baseline, no notifications sent")
         ping_healthcheck()
         return
 
-    fresh = [j for j in hits if j["cipher"] not in seen]
+    # One-time migration from the old ciphertext-only state. Sending during this scan would
+    # replay jobs whose ciphertext changed, so seed stable IDs/fingerprints and resume normally
+    # on the next 90-second scan. At most, a job posted during deployment is delayed/skipped.
+    if not any(key.startswith(("id:", "fp:")) for key in seen):
+        for job in jobs:
+            for key in _seen_keys(job):
+                seen[key] = now
+        save_seen(seen)
+        print("[info] migrated legacy seen state to stable job identities; no notifications sent")
+        ping_healthcheck()
+        return
+
+    fresh = [j for j in hits if not _was_seen(j, seen)]
 
     # Freshness guard: jobs older than MAX_AGE_HOURS are "handled" (marked seen below) but
     # never notified. Unknown age is treated as recent (kept).
@@ -1600,28 +1685,38 @@ def run_job_check(cfg, proxy):
             print(f"[info] {n_old} matching jobs older than {MAX_AGE_HOURS}h (skipped)")
         fresh = recent
 
-    fresh.sort(key=lambda j: -j["score"])  # best score first
-    to_send = fresh[:MAX_NOTIFS]
-    # Cap overflow is NOT marked seen -> it gets sent next check instead of being lost.
-    overflow = {j["cipher"] for j in fresh[MAX_NOTIFS:]}
-    if overflow:
-        print(f"[info] {len(overflow)} over MAX_NOTIFS cap; will send next check")
+    # Prefer the newest eligible jobs, with score as the tie-breaker. If a recovery scan still
+    # finds a large backlog, skip the overflow permanently rather than drip-feeding a flood.
+    fresh.sort(
+        key=lambda j: (
+            _parse_publish(j.get("publish", "")).timestamp()
+            if _parse_publish(j.get("publish", "")) else now,
+            j["score"],
+        ),
+        reverse=True,
+    )
+    burst_limit = min(MAX_NOTIFS, MAX_BURST_NOTIFS)
+    to_send = fresh[:burst_limit]
+    skipped_overflow = fresh[burst_limit:]
+    if skipped_overflow:
+        print(f"[info] {len(skipped_overflow)} over burst cap; marked handled without sending")
     print(f"[info] {len(to_send)} new to notify")
 
     store = load_store()
     for j in to_send:
         delivered = send(j, cfg)     # card + on-demand proposal button
         if delivered:
+            for key in _seen_keys(j):
+                seen[key] = now
+            save_seen(seen)
             tracker_ingest("notified", j)
         remember_job(store, j)       # so a later tap can look this job up
+        save_store(store)
         time.sleep(0.6)              # gentle on Telegram rate limits
-    save_store(store)
-
-    # Mark seen: everything we fetched EXCEPT the cap-overflow hits (so none are lost).
+    # Mark the full fetched window handled, including intentionally skipped flood overflow.
     for j in jobs:
-        c = j["cipher"]
-        if c and c not in overflow:
-            seen[c] = now
+        for key in _seen_keys(j):
+            seen[key] = now
     save_seen(seen)
     ping_healthcheck()
     print("[info] done")
@@ -1666,6 +1761,9 @@ def main():
         return
     if not BOT_TOKEN or not CHAT_ID:
         sys.exit("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID")
+
+    # Keep the handle alive for the full process lifetime; closing it releases the flock.
+    instance_lock = _acquire_instance_lock()
 
     cfg = load_filters()
     print(f"[info] filters: {len(cfg['_require'])} required, {len(cfg['_exclude'])} excluded, "

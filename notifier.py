@@ -929,11 +929,27 @@ def _openai_generate(prompt, json_mode=False, max_tokens=8192):
             code = str(error.get("code") or "")
             if r.status_code == 429:
                 kind = "insufficient_quota" if code == "insufficient_quota" else "rate_limit"
-                _record_ai_failure("OpenAI", kind, code)
-                print(f"[warn] openai HTTP 429 ({kind})", file=sys.stderr)
+                response_headers = getattr(r, "headers", {}) or {}
+                diagnostics = []
+                for name in (
+                    "x-ratelimit-limit-requests", "x-ratelimit-remaining-requests",
+                    "x-ratelimit-reset-requests", "x-ratelimit-limit-tokens",
+                    "x-ratelimit-remaining-tokens", "x-ratelimit-reset-tokens",
+                    "retry-after",
+                ):
+                    value = response_headers.get(name) or response_headers.get(name.title())
+                    if value is not None:
+                        diagnostics.append(f"{name}={str(value)[:40]}")
+                error_type = str(error.get("type") or "")[:60]
+                detail = ", ".join(filter(None, [f"code={code}" if code else "",
+                                                  f"type={error_type}" if error_type else "",
+                                                  *diagnostics]))
+                _record_ai_failure("OpenAI", kind, detail)
+                print(f"[warn] openai HTTP 429 ({kind}{'; ' + detail if detail else ''})",
+                      file=sys.stderr)
                 if kind == "rate_limit" and attempt < max_attempts - 1:
-                    headers = getattr(r, "headers", {}) or {}
-                    retry_after = headers.get("retry-after") or headers.get("Retry-After")
+                    retry_after = (response_headers.get("retry-after")
+                                   or response_headers.get("Retry-After"))
                     try:
                         delay = float(retry_after)
                     except (TypeError, ValueError):

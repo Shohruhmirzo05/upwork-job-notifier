@@ -117,4 +117,10 @@ jobs:
       - name: Verify service
         run: |
           ssh "${DEPLOY_USER}@${DEPLOY_HOST}" \
-            "sudo /bin/systemctl is-active --quiet upwork-notifier.service"
+            'set -eu
+             sudo /bin/systemctl is-active --quiet upwork-notifier.service
+             main_pid="$(/bin/systemctl show --property MainPID --value upwork-notifier.service)"
+             process_count="$(/usr/bin/pgrep -fc "[d]eploy/run_notifier.py")"
+             echo "service_main_pid=${main_pid} notifier_process_count=${process_count}"
+             test "${main_pid}" != "0"
+             test "${process_count}" -eq 1'

@@ -76,6 +76,26 @@ class ProposalQualityTests(unittest.TestCase):
         self.assertEqual(parsed["job_id"], "job-123")
         self.assertEqual(parsed["cipher"], "~cipher")
 
+    def test_batch_dedupe_merges_conflicting_ids_for_same_job(self):
+        first = {
+            "job_id": "lane-result-1", "cipher": "~same-job",
+            "title": "Flutter mobile app", "publish": "2026-08-20T08:00:00Z",
+        }
+        second = {**first, "job_id": "lane-result-2"}
+
+        self.assertEqual(notifier._dedupe_jobs([first, second]), [first])
+
+    def test_batch_dedupe_merges_rotated_cipher_using_fingerprint(self):
+        first = {
+            "job_id": "lane-result-1", "cipher": "~cipher-one",
+            "title": "Flutter mobile app", "publish": "2026-08-20T08:00:00Z",
+        }
+        second = {
+            **first, "job_id": "lane-result-2", "cipher": "~cipher-two",
+        }
+
+        self.assertEqual(notifier._dedupe_jobs([first, second]), [first])
+
     def test_backfill_window_is_limited_to_two_hours(self):
         self.assertEqual(notifier.MAX_AGE_HOURS, 2)
         self.assertEqual(notifier.MAX_BURST_NOTIFS, 8)
@@ -130,6 +150,32 @@ class ProposalQualityTests(unittest.TestCase):
         self.assertEqual(send.call_count, 8)
         for index in range(10):
             self.assertIn(f"id:stable-{index}", seen)
+
+    def test_duplicate_lane_results_send_one_telegram_card(self):
+        base = {
+            "job_id": "lane-result-1", "cipher": "~same-job",
+            "title": "Flutter app", "description": "", "skills": ["Flutter"],
+            "job_type": "FIXED", "hourly_min": None, "hourly_max": None,
+            "fixed": 1000, "tier": "Intermediate", "publish": "",
+            "link": "https://www.upwork.com/jobs/~same-job",
+        }
+        duplicate = {**base, "job_id": "lane-result-2"}
+        cfg = {"hot_min": 60, "good_min": 30, "search_queries": ["flutter"]}
+        seen = {"id:existing": 9_999_999_999}
+        with patch("notifier.get_token", return_value="token"), \
+                patch("notifier.fetch_all_jobs", return_value=[base, duplicate]), \
+                patch("notifier.score_job", return_value=(True, 30, ["flutter"])), \
+                patch("notifier.load_seen", return_value=seen), \
+                patch("notifier.save_seen"), \
+                patch("notifier.load_store", return_value={"offset": 0, "jobs": {}}), \
+                patch("notifier.save_store"), \
+                patch("notifier.send", return_value=True) as send, \
+                patch("notifier.tracker_ingest"), \
+                patch("notifier.ping_healthcheck"), \
+                patch("notifier.time.sleep"):
+            notifier.run_job_check(cfg, None)
+
+        send.assert_called_once()
 
     @patch("notifier._generate", return_value=None)
     def test_provider_failure_does_not_trigger_qa_retries(self, generate):

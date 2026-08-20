@@ -402,6 +402,25 @@ def _was_seen(job, seen):
     return any(key in seen for key in _seen_keys(job))
 
 
+def _dedupe_jobs(jobs):
+    """Collapse aliases of the same Upwork job within one fetched/send batch.
+
+    Upwork can return a different result/job id for the same ciphertext in separate
+    search lanes.  Deduping on one preferred id lets both aliases reach Telegram
+    before the first delivery is persisted.  Treat any shared stable id, ciphertext,
+    or title/publish fingerprint as proof that the batch entries are the same job.
+    """
+    unique = []
+    claimed_keys = set()
+    for job in jobs:
+        keys = _seen_keys(job)
+        if keys & claimed_keys:
+            continue
+        unique.append(job)
+        claimed_keys.update(keys)
+    return unique
+
+
 def _acquire_instance_lock():
     """Prevent a manual/accidental second notifier process from sending duplicate cards."""
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -415,9 +434,9 @@ def _acquire_instance_lock():
 
 
 def fetch_all_jobs(token, proxy, cfg):
-    """Run each search_query newest-first, merge, and dedupe by job id.
+    """Run each search_query newest-first and merge aliases of the same job.
     Falls back to newest-global pages if no search_queries are configured."""
-    by_identity = {}
+    collected = []
     queries = [q for q in (cfg.get("search_queries") or []) if q]
 
     if queries:
@@ -427,7 +446,7 @@ def fetch_all_jobs(token, proxy, cfg):
                 for r in results:
                     j = parse_job(r)
                     if j["cipher"]:
-                        by_identity.setdefault(_job_identity(j), j)
+                        collected.append(j)
                 print(f"[info] lane {q!r}: {len(results)} results")
             except Exception as e:
                 print(f"[warn] lane {q!r} failed: {e}", file=sys.stderr)
@@ -438,11 +457,11 @@ def fetch_all_jobs(token, proxy, cfg):
                 for r in fetch_page(token, proxy, offset):
                     j = parse_job(r)
                     if j["cipher"]:
-                        by_identity.setdefault(_job_identity(j), j)
+                        collected.append(j)
             except Exception as e:
                 print(f"[warn] page offset {offset} failed: {e}", file=sys.stderr)
 
-    return list(by_identity.values())
+    return _dedupe_jobs(collected)
 
 
 # ---------- telegram ----------
@@ -1697,7 +1716,9 @@ def run_job_check(cfg, proxy):
         ping_healthcheck()
         return
 
-    fresh = [j for j in hits if not _was_seen(j, seen)]
+    # Search lanes can overlap. Deduplicate the outgoing batch again as a final
+    # defense even if a caller/test supplies fetch results directly.
+    fresh = _dedupe_jobs([j for j in hits if not _was_seen(j, seen)])
 
     # Freshness guard: jobs older than MAX_AGE_HOURS are "handled" (marked seen below) but
     # never notified. Unknown age is treated as recent (kept).
@@ -1732,6 +1753,11 @@ def run_job_check(cfg, proxy):
 
     store = load_store()
     for j in to_send:
+        # A successful earlier alias in this same batch may already have claimed
+        # one of this job's identities. Never send it a second time.
+        if _was_seen(j, seen):
+            print(f"[info] duplicate batch alias skipped: {j.get('title', '')[:80]}")
+            continue
         delivered = send(j, cfg)     # card + on-demand proposal button
         if delivered:
             for key in _seen_keys(j):

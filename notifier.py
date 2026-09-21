@@ -55,7 +55,7 @@ JOBS_PER_QUERY = _int_env("JOBS_PER_QUERY", 50)  # newest N per search lane
 MAX_NOTIFS = _int_env("MAX_NOTIFS", 25)       # cap per run to avoid flood
 MAX_BURST_NOTIFS = _int_env("MAX_BURST_NOTIFS", 8)  # hard per-scan Telegram burst ceiling
 MAX_AGE_HOURS = _int_env("MAX_AGE_HOURS", 2)  # skip stale recovery/backfill jobs (0 = off)
-SEEN_TTL_DAYS = _int_env("SEEN_TTL_DAYS", 7)
+SEEN_TTL_DAYS = _int_env("SEEN_TTL_DAYS", 30)
 SEEN_PATH = Path(os.environ.get("SEEN_PATH", "seen.json"))
 LOCK_PATH = Path(os.environ.get("LOCK_PATH", "notifier.lock"))
 FILTERS_PATH = Path(os.environ.get("FILTERS_PATH", "filters.json"))

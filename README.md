@@ -15,7 +15,8 @@ after a matching job is posted**. Each check:
    of the newest *global* jobs.
 3. **Scores** each job with a local weighted-keyword engine (`filters.json`).
 4. Dedupes against `seen.json`, which persists in the service's dedicated state directory
-   (no repo commits; if state is ever lost it safely re-seeds without sending old jobs).
+   (no repo commits; entries older than 30 days are pruned automatically, and if state is
+   ever lost it safely re-seeds without sending old jobs).
 5. Skips anything posted more than `MAX_AGE_HOURS` (24h) ago.
 6. Sends each new job scoring ≥ `min_score` to Telegram — tagged **🔥 HOT / 🟢 GOOD / 🟡 MAYBE**,
    best score first, showing which keywords hit and how long ago it was posted.

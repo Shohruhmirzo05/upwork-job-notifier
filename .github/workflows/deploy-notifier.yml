@@ -91,6 +91,7 @@ jobs:
                   "OPENAI_REASONING": "low",
                   "SERVE_SECONDS": "31536000",
                   "MAX_BURST_NOTIFS": "8",
+                  "SEEN_TTL_DAYS": "30",
                   "SEEN_PATH": "/var/lib/upwork-notifier/seen.json",
                   "LOCK_PATH": "/var/lib/upwork-notifier/notifier.lock",
                   "STORE_PATH": "/var/lib/upwork-notifier/store.json",

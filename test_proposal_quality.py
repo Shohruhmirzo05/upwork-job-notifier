@@ -99,6 +99,38 @@ class ProposalQualityTests(unittest.TestCase):
     def test_backfill_window_is_limited_to_two_hours(self):
         self.assertEqual(notifier.MAX_AGE_HOURS, 2)
         self.assertEqual(notifier.MAX_BURST_NOTIFS, 8)
+        self.assertEqual(notifier.SEEN_TTL_DAYS, 30)
+
+    def test_inline_proxy_list_does_not_depend_on_download_api(self):
+        proxy_list = "192.0.2.10:8000:user-one:pass-one\n192.0.2.20:9000:user-two:pass-two"
+        with patch.object(notifier, "WEBSHARE_URL", proxy_list), \
+                patch("notifier.random.choice", return_value=proxy_list.splitlines()[1]):
+            proxies = notifier.get_proxy_dict()
+
+        expected = "http://user-two:pass-two@192.0.2.20:9000"
+        self.assertEqual(proxies, {"http": expected, "https": expected})
+
+    def test_token_fetch_rotates_proxy_after_failure(self):
+        first = "http://user:pass@192.0.2.10:8000"
+        second = "http://user:pass@192.0.2.20:9000"
+        proxy = {"http": first, "https": first}
+        failed = types.SimpleNamespace(status_code=403, cookies={})
+        succeeded = types.SimpleNamespace(
+            status_code=200, cookies={notifier.TOKEN_COOKIE: "visitor-token"})
+
+        with patch.object(notifier, "WEBSHARE_URL", "inline-list"), \
+                patch("notifier.get_proxy_dict", return_value={
+                    "http": second, "https": second,
+                }) as rotate, \
+                patch("notifier.requests.get", side_effect=[failed, succeeded], create=True) as request, \
+                patch("notifier._write_cached_token"), \
+                patch("notifier.time.sleep"):
+            token = notifier.get_token(proxy, tries=2, force=True)
+
+        self.assertEqual(token, "visitor-token")
+        rotate.assert_called_once()
+        self.assertEqual(request.call_args_list[1].kwargs["proxies"]["https"], second)
+        self.assertEqual(proxy["https"], second)
 
     def test_legacy_seen_state_migrates_without_sending(self):
         job = {

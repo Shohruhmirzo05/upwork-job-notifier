@@ -135,8 +135,10 @@ Repo → **Settings → Secrets and variables → Actions → Variables**:
 | `CHECK_INTERVAL` | seconds between checks inside a run | 90 |
 
 ### Optional proxy (only if the server IP gets blocked)
-If a run fails on the token/fetch: sign up free at **webshare.io**, copy the proxy-list
-**download link**, add it as the `WEBSHARE_URL` secret. (Direct currently works, so skip it.)
+If a run fails on the token/fetch: sign up free at **webshare.io** and add the proxy list as
+the encrypted `WEBSHARE_URL` secret, one `host:port:username:password` entry per line. A
+working proxy is chosen randomly when the service starts. The Webshare download URL is also
+supported, but an inline list avoids depending on a separate download token.
 
 ---
 

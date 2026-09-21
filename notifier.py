@@ -45,6 +45,8 @@ def _int_env(name, default):
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+# Either Webshare's proxy-list download URL or the encrypted inline proxy list.
+# Inline entries use Webshare's host:port:username:password format.
 WEBSHARE_URL = os.environ.get("WEBSHARE_URL", "").strip()  # optional; empty = go direct
 # Dead-man's-switch: ping this URL on every successful run. If pings stop (workflow died),
 # the external monitor (e.g. healthchecks.io) alerts you. Empty = disabled.
@@ -244,13 +246,19 @@ def tier_for(score, cfg):
 
 # ---------- proxy ----------
 def get_proxy_dict():
-    """Return a curl_cffi proxies dict from Webshare, or None to go direct."""
+    """Return a curl_cffi proxy from a Webshare download URL or inline list."""
     if not WEBSHARE_URL:
         return None
     try:
-        resp = requests.get(WEBSHARE_URL, timeout=15)
-        resp.raise_for_status()
-        lines = [l.strip() for l in resp.text.strip().splitlines() if l.strip()]
+        if "://" in WEBSHARE_URL:
+            resp = requests.get(WEBSHARE_URL, timeout=15)
+            resp.raise_for_status()
+            source = resp.text
+        else:
+            source = WEBSHARE_URL
+        lines = [line.strip() for line in source.splitlines() if line.strip()]
+        if not lines:
+            raise ValueError("proxy list is empty")
         host, port, user, pw = random.choice(lines).split(":", 3)
         url = f"http://{user}:{pw}@{host}:{port}"
         return {"http": url, "https": url}
@@ -293,6 +301,12 @@ def get_token(proxy, tries=5, force=False):
             return cached
     last = None
     for i in range(tries):
+        if i and proxy is not None and WEBSHARE_URL:
+            rotated = get_proxy_dict()
+            if rotated:
+                proxy.clear()
+                proxy.update(rotated)
+                print(f"[info] rotated proxy for token attempt {i+1}/{tries}")
         imp = IMPERSONATE[i % len(IMPERSONATE)]
         try:
             resp = requests.get(UPWORK_HOME, impersonate=imp, proxies=proxy, timeout=30)

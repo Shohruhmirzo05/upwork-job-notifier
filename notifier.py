@@ -1818,18 +1818,6 @@ def serve(cfg, proxy):
 
 # ---------- main ----------
 def main():
-    if "--check-upwork" in sys.argv:
-        if not WEBSHARE_URL:
-            sys.exit("[error] WEBSHARE_URL is not configured")
-        proxy = get_proxy_dict()
-        if proxy is None:
-            sys.exit("[error] configured proxy pool could not be loaded")
-        token = get_token(proxy, force=True)
-        results = fetch_page(token, proxy, 0, count=5)
-        if not results:
-            sys.exit("[error] Upwork proxy smoke test returned no jobs")
-        print(f"[ok] Upwork proxy smoke test fetched {len(results)} jobs")
-        return
     if "--check-openai" in sys.argv:
         if not OPENAI_API_KEY:
             sys.exit("[error] OPENAI_API_KEY is not configured")

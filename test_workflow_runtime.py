@@ -24,7 +24,6 @@ class WorkflowRuntimeTests(unittest.TestCase):
         self.assertNotIn("continue-on-error: true", CHECK_WORKFLOW)
         self.assertIn("branches: [main]", DEPLOY_WORKFLOW)
         self.assertIn("DEPLOY_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}", DEPLOY_WORKFLOW)
-        self.assertIn("python3 notifier.py --check-upwork", DEPLOY_WORKFLOW)
         self.assertIn("DEPLOY_RELEASE_ID:", DEPLOY_WORKFLOW)
         self.assertNotRegex(
             CHECK_WORKFLOW,

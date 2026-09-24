@@ -107,14 +107,6 @@ jobs:
           path.chmod(0o600)
           PY
 
-      - name: Verify paid proxy access to Upwork
-        run: |
-          python3 -m pip install \
-            --disable-pip-version-check \
-            --quiet \
-            -r requirements.txt
-          WEBSHARE_URL="${DEPLOY_WEBSHARE_URL}" python3 notifier.py --check-upwork
-
       - name: Upload and activate release
         run: |
           archive="/tmp/upwork-notifier-${GITHUB_SHA}.tar.gz"

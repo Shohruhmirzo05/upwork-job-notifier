@@ -132,6 +132,27 @@ class ProposalQualityTests(unittest.TestCase):
         self.assertEqual(request.call_args_list[1].kwargs["proxies"]["https"], second)
         self.assertEqual(proxy["https"], second)
 
+    def test_upwork_smoke_check_uses_configured_proxy_without_telegram(self):
+        proxy = {"http": "http://proxy", "https": "http://proxy"}
+        with patch.object(sys, "argv", ["notifier.py", "--check-upwork"]), \
+                patch.object(notifier, "WEBSHARE_URL", "inline-list"), \
+                patch("notifier.get_proxy_dict", return_value=proxy), \
+                patch("notifier.get_token", return_value="token") as get_token, \
+                patch("notifier.fetch_page", return_value=[{"id": "job"}]) as fetch_page, \
+                patch("notifier._acquire_instance_lock") as acquire_lock:
+            notifier.main()
+
+        get_token.assert_called_once_with(proxy, force=True)
+        fetch_page.assert_called_once_with("token", proxy, 0, count=5)
+        acquire_lock.assert_not_called()
+
+    def test_upwork_smoke_check_rejects_unloadable_proxy_pool(self):
+        with patch.object(sys, "argv", ["notifier.py", "--check-upwork"]), \
+                patch.object(notifier, "WEBSHARE_URL", "inline-list"), \
+                patch("notifier.get_proxy_dict", return_value=None):
+            with self.assertRaisesRegex(SystemExit, "proxy pool could not be loaded"):
+                notifier.main()
+
     def test_legacy_seen_state_migrates_without_sending(self):
         job = {
             "job_id": "stable-123", "cipher": "~new-cipher", "title": "Flutter app",

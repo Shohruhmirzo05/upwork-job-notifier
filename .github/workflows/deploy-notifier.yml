@@ -25,6 +25,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
+      # Manual runs may redeploy the same commit after a secret/config update.
+      # Give those runs a unique hex-safe release ID so the immutable release
+      # directory guard does not reject them as duplicates.
+      DEPLOY_RELEASE_ID: ${{ github.event_name == 'workflow_dispatch' && github.run_id || github.sha }}
       # Public deployment coordinates are pinned in the workflow. Credentials
       # and application secrets remain in GitHub Secrets.
       DEPLOY_HOST: 104.248.34.19
@@ -113,7 +117,7 @@ jobs:
             "sudo /usr/local/sbin/deploy-upwork-notifier \
             '${destination}/$(basename "$archive")' \
             '${destination}/$(basename "$environment")' \
-            '${GITHUB_SHA}'"
+            '${DEPLOY_RELEASE_ID}'"
 
       - name: Verify service
         run: |

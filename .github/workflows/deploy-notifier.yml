@@ -134,14 +134,12 @@ jobs:
         run: |
           ssh "${DEPLOY_USER}@${DEPLOY_HOST}" \
             'set -eu
-             service_started="$(/bin/systemctl show --property ActiveEnterTimestamp --value upwork-notifier.service)"
              attempt=1
              while test "${attempt}" -le 24; do
-               logs="$(sudo /usr/bin/journalctl \
-                 --unit upwork-notifier.service \
-                 --since "${service_started}" \
+               logs="$(/bin/systemctl status \
+                 --lines 250 \
                  --no-pager \
-                 --output cat)"
+                 upwork-notifier.service 2>/dev/null || true)"
                if printf "%s\n" "${logs}" | /usr/bin/grep -Eq "\[info\] fetched [1-9][0-9]* unique jobs across lanes" && \
                   printf "%s\n" "${logs}" | /usr/bin/grep -Fq "[info] done"; then
                  echo "successful_job_scan=1"

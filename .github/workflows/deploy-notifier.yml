@@ -129,3 +129,26 @@ jobs:
              echo "service_main_pid=${main_pid} notifier_process_count=${process_count}"
              test "${main_pid}" != "0"
              test "${process_count}" -eq 1'
+
+      - name: Verify successful job scan
+        run: |
+          ssh "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            'set -eu
+             service_started="$(/bin/systemctl show --property ActiveEnterTimestamp --value upwork-notifier.service)"
+             attempt=1
+             while test "${attempt}" -le 24; do
+               logs="$(sudo /usr/bin/journalctl \
+                 --unit upwork-notifier.service \
+                 --since "${service_started}" \
+                 --no-pager \
+                 --output cat)"
+               if printf "%s\n" "${logs}" | /usr/bin/grep -Eq "\[info\] fetched [1-9][0-9]* unique jobs across lanes" && \
+                  printf "%s\n" "${logs}" | /usr/bin/grep -Fq "[info] done"; then
+                 echo "successful_job_scan=1"
+                 exit 0
+               fi
+               /bin/sleep 5
+               attempt=$((attempt + 1))
+             done
+             echo "notifier did not complete a successful job scan after restart" >&2
+             exit 1'

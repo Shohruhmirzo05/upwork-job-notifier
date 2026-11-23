@@ -16,6 +16,12 @@ existing owner Telegram bot and private Proposal Radar. Use the personal Freelan
   proposal and terms are required. No automatic Connects purchase or boost.
 - Preview relay output before authorized delivery. Verify Telegram and tracker receipts
   separately. Reconcile uncertain sends; never blindly retry.
+- The repository is public. Keep account records, proposal drafts, raw batches and
+  plaintext delivery receipts out of commits, workflow inputs/logs and public caches.
+  Use temporary OFFICIAL_RELAY_BATCH secret plus deliver_results=true in notifier.yml.
+  Receipt caches must be authenticated/encrypted. Reuse OFFICIAL_RELAY_STATE_KEY; never
+  overwrite it once configured. Initialize missing receipt state only after reconciling
+  any earlier deliveries. Delete the temporary batch secret after the run ends.
 - Preserve user edits. Tests must not poll Upwork, invoke paid AI or send externally.
 - Accepted means submitted, viewed is not replied/hired. Snapshots are page/status scoped.
   Never synchronize old applications with today's date as their submission date.

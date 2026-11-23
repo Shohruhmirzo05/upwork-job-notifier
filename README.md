@@ -71,6 +71,7 @@ with deliver_results=true. Never put account data in public workflow inputs. Exi
 Telegram/tracker secrets are reused; plugin credentials are never copied. The receipt
 cache is encrypted using OFFICIAL_RELAY_STATE_KEY and contains no plaintext account data.
 Delete the temporary batch secret after delivery.
+Reuse the existing receipt encryption key; replacing it loses access to prior receipts.
 Bootstrap its delivery ledger once with initialize_delivery_state=true; subsequent
 missing ledgers fail closed. Normal regression checks run offline only.
 

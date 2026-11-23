@@ -1,29 +1,14 @@
 #!/usr/bin/env python3
-"""
-Upwork -> Telegram recent-jobs notifier.
-
-Runs continuously under the DigitalOcean systemd service. Each scan:
-  1. Grabs a visitor GraphQL token from upwork.com (curl_cffi Chrome TLS impersonation).
-  2. Runs several SCOPED searches (search_queries in filters.json), newest-first, and
-     merges + dedupes the results by job id. This beats scanning only the newest global
-     jobs — you get deep coverage of your niche instead of a shallow slice of everything.
-  3. Scores each job with a LOCAL, zero-cost weighted-keyword engine (filters.json).
-  4. Dedupes against crash-safe persistent seen.json state on the server.
-  5. Sends each genuinely-new job scoring >= min_score to Telegram, tagged HOT/GOOD/MAYBE,
-     best score first.
-
-No AI, no API costs — all filtering is deterministic keyword matching you fully control.
-First run seeds the baseline silently (so you don't get blasted).
-
-Method credit: adapted from asaniczka/Upwork-Job-Scraper (public GraphQL + visitor
-token). Never logs in as you — only public listings — so your account stays out of it.
+"""Telegram proposal assistant. Upwork discovery is performed on demand through the
+connected official plugin; this process never contacts Upwork itself.
+Official results are delivered with official_bridge.py, using existing Telegram/tracker
+configuration. No browser automation, visitor tokens, proxies or search polling.
 """
 
 import fcntl
 import hashlib
 import json
 import os
-import random
 import re
 import sys
 import time
@@ -45,15 +30,9 @@ def _int_env(name, default):
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
-# Either Webshare's proxy-list download URL or the encrypted inline proxy list.
-# Inline entries use Webshare's host:port:username:password format.
-WEBSHARE_URL = os.environ.get("WEBSHARE_URL", "").strip()  # optional; empty = go direct
 # Dead-man's-switch: ping this URL on every successful run. If pings stop (workflow died),
 # the external monitor (e.g. healthchecks.io) alerts you. Empty = disabled.
 HEALTHCHECK_URL = os.environ.get("HEALTHCHECK_URL", "").strip()
-MAX_PAGES = _int_env("MAX_PAGES", 2)          # only used if no search_queries
-PAGE_SIZE = 50
-JOBS_PER_QUERY = _int_env("JOBS_PER_QUERY", 50)  # newest N per search lane
 MAX_NOTIFS = _int_env("MAX_NOTIFS", 25)       # cap per run to avoid flood
 MAX_BURST_NOTIFS = _int_env("MAX_BURST_NOTIFS", 8)  # hard per-scan Telegram burst ceiling
 MAX_AGE_HOURS = _int_env("MAX_AGE_HOURS", 2)  # skip stale recovery/backfill jobs (0 = off)
@@ -61,8 +40,6 @@ SEEN_TTL_DAYS = _int_env("SEEN_TTL_DAYS", 30)
 SEEN_PATH = Path(os.environ.get("SEEN_PATH", "seen.json"))
 LOCK_PATH = Path(os.environ.get("LOCK_PATH", "notifier.lock"))
 FILTERS_PATH = Path(os.environ.get("FILTERS_PATH", "filters.json"))
-TOKEN_PATH = Path(os.environ.get("TOKEN_PATH", ".token.json"))
-TOKEN_TTL_SEC = _int_env("TOKEN_TTL_SEC", 1500)  # reuse a cached visitor token ~25 min
 
 # ---- proposal drafting (optional; Gemini with paid OpenAI fallback). ----
 # Proposals are ON DEMAND: each job card gets a "Generate Proposal" button; a draft is
@@ -90,53 +67,12 @@ TRACKER_API_URL = os.environ.get("TRACKER_API_URL", "").strip().rstrip("/")
 TRACKER_API_TOKEN = os.environ.get("TRACKER_API_TOKEN", "").strip()
 
 # ---- serve loop + button-tap handling ----
-JOB_INTERVAL = _int_env("CHECK_INTERVAL", 90)   # seconds between job scans in serve mode
 SERVE_SECONDS = _int_env("SERVE_SECONDS", 0)    # >0 -> run the serve loop this many seconds
 STORE_PATH = Path(os.environ.get("STORE_PATH", "store.json"))
 STORE_TTL_HOURS = _int_env("STORE_TTL_HOURS", 26)  # keep tapped-job details this long
 AWAITING_TTL_SEC = _int_env("AWAITING_TTL_SEC", 1800)  # "send questions" mode stays armed this long
 
 UPWORK_HOME = "https://www.upwork.com/"
-GRAPHQL_URL = "https://www.upwork.com/api/graphql/v1"
-TOKEN_COOKIE = "visitor_gql_token"
-
-GRAPHQL_QUERY = """
-query VisitorJobSearch($requestVariables: VisitorJobSearchV1Request!) {
-  search {
-    universalSearchNuxt {
-      visitorJobSearchV1(request: $requestVariables) {
-        paging { total offset count }
-        results {
-          id
-          title
-          description
-          ontologySkills { prefLabel }
-          jobTile {
-            job {
-              id
-              ciphertext: cipherText
-              jobType
-              hourlyBudgetMax
-              hourlyBudgetMin
-              contractorTier
-              publishTime
-              fixedPriceAmount { amount }
-            }
-          }
-        }
-      }
-    }
-  }
-}
-"""
-
-HEADERS_BASE = {
-    "Accept": "*/*",
-    "Accept-Language": "en-US,en;q=0.8",
-    "Referer": "https://www.upwork.com/nx/search/jobs/?",
-    "X-Upwork-Accept-Language": "en-US",
-    "Content-Type": "application/json",
-}
 
 
 # =====================================================================
@@ -245,113 +181,14 @@ def tier_for(score, cfg):
 
 
 # ---------- proxy ----------
-def get_proxy_dict():
-    """Return a curl_cffi proxy from a Webshare download URL or inline list."""
-    if not WEBSHARE_URL:
-        return None
-    try:
-        if "://" in WEBSHARE_URL:
-            resp = requests.get(WEBSHARE_URL, timeout=15)
-            resp.raise_for_status()
-            source = resp.text
-        else:
-            source = WEBSHARE_URL
-        lines = [line.strip() for line in source.splitlines() if line.strip()]
-        if not lines:
-            raise ValueError("proxy list is empty")
-        host, port, user, pw = random.choice(lines).split(":", 3)
-        url = f"http://{user}:{pw}@{host}:{port}"
-        return {"http": url, "https": url}
-    except Exception as e:
-        print(f"[warn] proxy fetch failed ({e}); trying direct", file=sys.stderr)
-        return None
+def _unsupported_discovery(*args, **kwargs):
+    raise RuntimeError("Unofficial Upwork discovery is disabled. Use the connected official plugin on demand.")
 
 
-# ---------- upwork ----------
-# Rotate TLS fingerprints across retries — helps dodge intermittent Cloudflare 403s
-# (e.g. from shared GitHub Actions IPs). Kept conservative to known curl_cffi targets.
-IMPERSONATE = ["chrome", "chrome131", "chrome124", "chrome120", "safari17_0"]
-
-
-def _read_cached_token():
-    """Return a still-fresh cached token, or None. Persisting the token across loop
-    iterations means we hit the 403-prone homepage ~once per run, not once per check."""
-    try:
-        d = json.loads(TOKEN_PATH.read_text())
-        if d.get("token") and (time.time() - d.get("ts", 0)) < TOKEN_TTL_SEC:
-            return d["token"]
-    except Exception:
-        pass
-    return None
-
-
-def _write_cached_token(token):
-    try:
-        TOKEN_PATH.write_text(json.dumps({"token": token, "ts": time.time()}))
-    except Exception:
-        pass
-
-
-def get_token(proxy, tries=5, force=False):
-    """Return a visitor GraphQL token — from disk cache if fresh, else fetched from
-    upwork.com with backoff + rotating TLS fingerprints to ride out Cloudflare 403s."""
-    if not force:
-        cached = _read_cached_token()
-        if cached:
-            return cached
-    last = None
-    for i in range(tries):
-        if i and proxy is not None and WEBSHARE_URL:
-            rotated = get_proxy_dict()
-            if rotated:
-                proxy.clear()
-                proxy.update(rotated)
-                print(f"[info] rotated proxy for token attempt {i+1}/{tries}")
-        imp = IMPERSONATE[i % len(IMPERSONATE)]
-        try:
-            resp = requests.get(UPWORK_HOME, impersonate=imp, proxies=proxy, timeout=30)
-            if resp.status_code == 200:
-                token = resp.cookies.get(TOKEN_COOKIE)
-                if token:
-                    _write_cached_token(token)
-                    return token
-                last = RuntimeError(f"200 but no {TOKEN_COOKIE} cookie "
-                                    f"({list(resp.cookies.keys())})")
-            else:
-                last = RuntimeError(f"home HTTP {resp.status_code}")
-        except Exception as e:
-            last = e
-        if i < tries - 1:
-            wait = 3 * (i + 1)
-            print(f"[warn] token attempt {i+1}/{tries} failed ({last}); retrying in {wait}s",
-                  file=sys.stderr)
-            time.sleep(wait)
-    raise RuntimeError(f"token fetch failed after {tries} tries: {last}")
-
-
-def fetch_page(token, proxy, offset, user_query="", count=PAGE_SIZE, tries=3):
-    headers = {**HEADERS_BASE, "Authorization": f"Bearer {token}"}
-    # highlight:False -> clean title/description text (no <em>/control-char markers)
-    reqvars = {"sort": "recency", "highlight": False,
-               "paging": {"offset": offset, "count": count}}
-    if user_query:
-        reqvars["userQuery"] = user_query
-    payload = {"query": GRAPHQL_QUERY, "variables": {"requestVariables": reqvars}}
-    last = None
-    for i in range(tries):
-        imp = IMPERSONATE[i % len(IMPERSONATE)]
-        try:
-            resp = requests.post(GRAPHQL_URL, headers=headers, json=payload,
-                                 proxies=proxy, impersonate=imp, timeout=25)
-            resp.raise_for_status()
-            data = resp.json()
-            return (data.get("data", {}).get("search", {}).get("universalSearchNuxt", {})
-                    .get("visitorJobSearchV1", {}).get("results", []) or [])
-        except Exception as e:
-            last = e
-            if i < tries - 1:
-                time.sleep(2 * (i + 1))
-    raise last
+# Fail closed for older scripts rather than silently reactivating a legacy scanner.
+get_proxy_dict = _unsupported_discovery
+get_token = _unsupported_discovery
+fetch_page = _unsupported_discovery
 
 
 def parse_job(r):
@@ -447,35 +284,7 @@ def _acquire_instance_lock():
     return handle
 
 
-def fetch_all_jobs(token, proxy, cfg):
-    """Run each search_query newest-first and merge aliases of the same job.
-    Falls back to newest-global pages if no search_queries are configured."""
-    collected = []
-    queries = [q for q in (cfg.get("search_queries") or []) if q]
-
-    if queries:
-        for q in queries:
-            try:
-                results = fetch_page(token, proxy, 0, user_query=q, count=JOBS_PER_QUERY)
-                for r in results:
-                    j = parse_job(r)
-                    if j["cipher"]:
-                        collected.append(j)
-                print(f"[info] lane {q!r}: {len(results)} results")
-            except Exception as e:
-                print(f"[warn] lane {q!r} failed: {e}", file=sys.stderr)
-            time.sleep(0.3)  # be gentle on Upwork
-    else:
-        for offset in range(0, MAX_PAGES * PAGE_SIZE, PAGE_SIZE):
-            try:
-                for r in fetch_page(token, proxy, offset):
-                    j = parse_job(r)
-                    if j["cipher"]:
-                        collected.append(j)
-            except Exception as e:
-                print(f"[warn] page offset {offset} failed: {e}", file=sys.stderr)
-
-    return _dedupe_jobs(collected)
+fetch_all_jobs = _unsupported_discovery
 
 
 # ---------- telegram ----------
@@ -742,7 +551,11 @@ def _job_portfolio_signals(job):
     native_ios = bool(re.search(
         r"\b(?:swift|swiftui|uikit|xcode|widgetkit|app intents?|live activities|"
         r"dynamic island|arkit|realitykit)\b", text)) and not cross_platform
+    voice_telephony = bool(re.search(
+        r"\b(?:asterisk|freepbx|sip|pbx|livekit|telephony|voice agents?|"
+        r"ai calling|ai phone|phone agents?|call automation)\b", text))
     return {
+        "voice_telephony": voice_telephony,
         "flutter": flutter,
         "react_native": react_native,
         "crisis_mobile": crisis and mobile,
@@ -757,6 +570,15 @@ def _portfolio_directive(job):
     """Return deterministic, job-specific proof routing for every AI provider."""
     signals = _job_portfolio_signals(job)
     rules = ["Choose proof by the requested platform and product domain, not project recency."]
+    if signals["voice_telephony"]:
+        rules.append(
+            "Use Sado AI as the primary telephony/AI voice-agent proof: production Sarkor SIP, "
+            "Asterisk/ARI, custom TypeScript voice runtime, inbound/outbound calls, appointments, "
+            "callbacks, human handoff and CRM/API workflows. Approved URL: https://sadoai.uz/. "
+            "Do not relabel Sado as LiveKit, FreePBX or Odoo experience. Named services absent "
+            "from the verified profile are proposed integrations, not past delivery. Preserve "
+            "the profile's limits on trunk capacity, meeting links and reminders."
+        )
     if signals["crisis_mobile"]:
         rules.append(
             "MANDATORY: lead with CrisisPath. It is the direct crisis/safety-domain Flutter "
@@ -1182,6 +1004,7 @@ def _proposal_hard_failures(raw, expected_mode=None, job=None):
             failures.append("team mode does not say Shohruh will lead personally")
 
     names = (
+        "Sado AI",
         "Salom AI Business", "BandMate", "Launchcast", "CrisisPath", "Clove AI",
         "Goby AI", "PicTrans", "QuarCade", "Kowl", "Karly", "Salom AI",
     )
@@ -1438,7 +1261,7 @@ def load_seen():
         return seen if isinstance(seen, dict) else None
     except Exception as e:
         # Fail closed. An empty dict would replay every matching job after a partial/corrupt
-        # write; None tells run_job_check to reseed silently instead.
+        # write. Keep the fail-closed legacy state behavior.
         print(f"[warn] seen state unreadable ({e}); reseeding without notifications",
               file=sys.stderr)
         return None
@@ -1684,132 +1507,16 @@ def handle_updates(cfg, long_poll=0):
     save_store(store)
 
 
-# ---------- one job scan ----------
-def run_job_check(cfg, proxy):
-    token = get_token(proxy)
-    jobs = fetch_all_jobs(token, proxy, cfg)
-    if not jobs:
-        # Likely a stale cached token (401) — force a fresh one and retry once.
-        print("[warn] no jobs on first pass; refreshing token and retrying", file=sys.stderr)
-        token = get_token(proxy, force=True)
-        jobs = fetch_all_jobs(token, proxy, cfg)
-    print(f"[info] fetched {len(jobs)} unique jobs across lanes")
-
-    hits = []
-    for j in jobs:
-        passes, score, matched = score_job(j, cfg)
-        if passes:
-            j["score"], j["matched"] = score, matched
-            hits.append(j)
-    hot = sum(1 for j in hits if j["score"] >= cfg["hot_min"])
-    good = sum(1 for j in hits if cfg["good_min"] <= j["score"] < cfg["hot_min"])
-    print(f"[info] {len(hits)} pass filters  (HOT={hot}, GOOD={good}, MAYBE={len(hits)-hot-good})")
-
-    seen = load_seen()
-    now = time.time()
-
-    if seen is None:  # first run: seed silently
-        seed = {key: now for job in jobs for key in _seen_keys(job)}
-        save_seen(seed)
-        send_plain(f"✅ Upwork notifier armed. Watching {len(jobs)} jobs across "
-                   f"{len(cfg.get('search_queries') or [])} search lanes. "
-                   f"You'll get HOT/GOOD/MAYBE pings for new matching jobs.")
-        print("[info] seeded baseline, no notifications sent")
-        ping_healthcheck()
-        return
-
-    # One-time migration from the old ciphertext-only state. Sending during this scan would
-    # replay jobs whose ciphertext changed, so seed stable IDs/fingerprints and resume normally
-    # on the next 90-second scan. At most, a job posted during deployment is delayed/skipped.
-    if not any(key.startswith(("id:", "fp:")) for key in seen):
-        for job in jobs:
-            for key in _seen_keys(job):
-                seen[key] = now
-        save_seen(seen)
-        print("[info] migrated legacy seen state to stable job identities; no notifications sent")
-        ping_healthcheck()
-        return
-
-    # Search lanes can overlap. Deduplicate the outgoing batch again as a final
-    # defense even if a caller/test supplies fetch results directly.
-    fresh = _dedupe_jobs([j for j in hits if not _was_seen(j, seen)])
-
-    # Freshness guard: jobs older than MAX_AGE_HOURS are "handled" (marked seen below) but
-    # never notified. Unknown age is treated as recent (kept).
-    if MAX_AGE_HOURS > 0:
-        recent, n_old = [], 0
-        for j in fresh:
-            a = age_hours(j["publish"])
-            if a is not None and a > MAX_AGE_HOURS:
-                n_old += 1
-            else:
-                recent.append(j)
-        if n_old:
-            print(f"[info] {n_old} matching jobs older than {MAX_AGE_HOURS}h (skipped)")
-        fresh = recent
-
-    # Prefer the newest eligible jobs, with score as the tie-breaker. If a recovery scan still
-    # finds a large backlog, skip the overflow permanently rather than drip-feeding a flood.
-    fresh.sort(
-        key=lambda j: (
-            _parse_publish(j.get("publish", "")).timestamp()
-            if _parse_publish(j.get("publish", "")) else now,
-            j["score"],
-        ),
-        reverse=True,
-    )
-    burst_limit = min(MAX_NOTIFS, MAX_BURST_NOTIFS)
-    to_send = fresh[:burst_limit]
-    skipped_overflow = fresh[burst_limit:]
-    if skipped_overflow:
-        print(f"[info] {len(skipped_overflow)} over burst cap; marked handled without sending")
-    print(f"[info] {len(to_send)} new to notify")
-
-    store = load_store()
-    for j in to_send:
-        # A successful earlier alias in this same batch may already have claimed
-        # one of this job's identities. Never send it a second time.
-        if _was_seen(j, seen):
-            print(f"[info] duplicate batch alias skipped: {j.get('title', '')[:80]}")
-            continue
-        delivered = send(j, cfg)     # card + on-demand proposal button
-        if delivered:
-            for key in _seen_keys(j):
-                seen[key] = now
-            save_seen(seen)
-            tracker_ingest("notified", j)
-        remember_job(store, j)       # so a later tap can look this job up
-        save_store(store)
-        time.sleep(0.6)              # gentle on Telegram rate limits
-    # Mark the full fetched window handled, including intentionally skipped flood overflow.
-    for j in jobs:
-        for key in _seen_keys(j):
-            seen[key] = now
-    save_seen(seen)
-    ping_healthcheck()
-    print("[info] done")
+# ---------- retired Upwork scanner ----------
+run_job_check = _unsupported_discovery
 
 
-# ---------- serve loop ----------
-def serve(cfg, proxy):
-    """Run for SERVE_SECONDS: scan jobs every JOB_INTERVAL and, in between, long-poll for
-    button taps so proposals come back within seconds."""
-    end = time.time() + SERVE_SECONDS
-    last_check = 0.0
-    print(f"[info] serve mode for {SERVE_SECONDS}s (job scan every {JOB_INTERVAL}s; "
-          f"proposal button {'ON' if AI_ENABLED else 'off'})")
-    while True:
-        if time.time() >= end:
-            break
-        if time.time() - last_check >= JOB_INTERVAL:
-            try:
-                run_job_check(cfg, proxy)
-            except Exception as e:
-                print(f"[warn] job check failed: {e}", file=sys.stderr)
-            last_check = time.time()
-        remaining = end - time.time()
-        if remaining <= 0:
-            break
+def serve(cfg, proxy=None):
+    """Handle Telegram taps only. Never schedule or fetch anything from Upwork."""
+    end = time.monotonic() + SERVE_SECONDS
+    print("[info] Telegram assistant running; Upwork discovery disabled")
+    while time.monotonic() < end:
+        remaining = end - time.monotonic()
         if AI_ENABLED:
             handle_updates(cfg, long_poll=min(25, max(1, int(remaining))))
         else:
@@ -1838,12 +1545,9 @@ def main():
           f"{len(cfg['_boost'])} boosts, {len(cfg.get('search_queries') or [])} search lanes, "
           f"min_score={cfg['min_score']}")
 
-    proxy = get_proxy_dict()
-
     if SERVE_SECONDS > 0:
-        serve(cfg, proxy)
+        serve(cfg)
     else:
-        run_job_check(cfg, proxy)
         handle_updates(cfg, long_poll=0)  # drain any pending taps/messages once
 
 

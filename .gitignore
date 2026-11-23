@@ -26,3 +26,7 @@ tracker/.wrangler/
 
 # local Product Design QA captures (report stays versioned)
 tracker/design-qa-*.png
+
+# Official result relay runtime
+official-delivery.sqlite3*
+*official-batch*.json

@@ -1,186 +1,88 @@
-# Upwork → Telegram Job Notifier
+# Official Upwork plugin results → Telegram
 
-Pushes new Upwork jobs matching your profile to Telegram, 24/7 from an isolated systemd
-service on DigitalOcean — **your computer can be off**. GitHub Actions is used only for
-controlled deployments and proposal QA, not as a permanent application server. All
-filtering is deterministic keyword scoring you control.
+The existing Telegram bot and Proposal Radar receive curated job alerts, copy-ready
+proposals, Connects snapshots and qualified performance reports. Upwork reads happen
+**on demand through the connected official plugin in ChatGPT/Codex**. This bot does not
+connect to Upwork, extract plugin credentials, automate its website, scrape listings,
+rotate proxies or poll for marketplace changes. No recurring discovery is configured.
 
-## How it works
-The server service runs continuously and checks every ~90s, so you're pinged **~1–2 min
-after a matching job is posted**. Each check:
-1. Gets a *visitor* GraphQL token from upwork.com (Chrome TLS impersonation via curl_cffi),
-   **cached ~25 min** and reused across checks so the (403-prone) homepage is hit rarely.
-2. Runs **multiple scoped searches** (the `search_queries` in `filters.json`), newest-first,
-   and **merges + dedupes** the results by job id — deep niche coverage, not a thin slice
-   of the newest *global* jobs.
-3. **Scores** each job with a local weighted-keyword engine (`filters.json`).
-4. Dedupes against `seen.json`, which persists in the service's dedicated state directory
-   (no repo commits; entries older than 30 days are pruned automatically, and if state is
-   ever lost it safely re-seeds without sending old jobs).
-5. Skips anything posted more than `MAX_AGE_HOURS` (24h) ago.
-6. Sends each new job scoring ≥ `min_score` to Telegram — tagged **🔥 HOT / 🟢 GOOD / 🟡 MAYBE**,
-   best score first, showing which keywords hit and how long ago it was posted.
-7. Mirrors every delivered job, generated proposal, hook style, and screening answer to the
-   private [Proposal Radar](https://upworkproposals.fera-tech.com) tracker. Tracker failures
-   are best-effort and never interrupt Telegram notifications.
+## Rules
 
-It **never logs in as you** — only public listings — so your Upwork account is not in the
-loop. Worst case is a proxy IP getting blocked, not your profile flagged. Still a ToS grey
-area; keep the interval sane and treat it as personal tooling.
+Use Shohruh Alijonov's personal Freelancer account. Follow current guidance:
+- https://support.upwork.com/hc/en-us/articles/55446516654611-How-to-use-Upwork-with-AI-agents-through-MCP
+- https://support.upwork.com/hc/en-us/articles/56577997707923-Rate-limits-for-Upwork-MCP
 
----
+Do not recreate checks every few minutes or bypass a restriction. The host plugin's
+connection is not a server API key that this bot can reuse. This is an on-demand result
+relay, not a standalone connected MCP client. Submission still requires the official
+complete preview and explicit confirmation. The bot cannot submit, boost, buy Connects,
+edit profiles, accept offers or send Upwork client messages.
 
-## Why scoped searches (the key upgrade)
+Accepted means Submitted, not hired. A view is not a reply. Partial/status-filtered
+proposal lists cannot establish whole-account conversion rates. Current access does not
+prove that an account-risk warning has been removed.
 
-Fetching only the newest *global* jobs is shallow — on busy Upwork the newest 100 jobs span
-just a few minutes, so niche postings scroll past before the next run sees them. Instead we
-run ~17 targeted searches (`swift`, `ios app store testflight`, `flutter dart firebase`,
-`arkit realitykit lidar`, …), each returning the newest 50 of *that* niche, then merge and
-dedupe. One run currently surfaces ~430 unique relevant jobs — nothing in your niche slips
-through between runs.
+## Existing configuration retained
 
----
+Telegram: @upwork_notificationsbot, configured owner's chat.
+Private tracker: https://upworkproposals.fera-tech.com
+Verified evidence/voice: profile.md, proposal_prompt.md, notifier.py's portfolio routing
+and proposal quality gate. filters.json can score locally supplied jobs, never search.
+notifier.py's service loop handles Telegram buttons only; retired Upwork discovery
+entry points fail closed. Server deployment is separate from local implementation.
 
-## Filtering — the `filters.json` file
+## Deliver results
 
-One file controls everything; edit and commit, no code changes. Scales to hundreds of terms.
+Create a temporary JSON batch from actual official plugin responses:
 
-```jsonc
+```json
 {
-  "search_queries": ["swift", "ios app store testflight app review", "flutter dart firebase supabase", ...],
-  "exclude":     ["data entry", "wix", "shopify store", ...],   // reject if ANY match (checked first)
-  "require_any": ["ios", "swift", "flutter", "openai", ...],    // job must match >=1, else dropped (a GATE)
-  "boost":       {"swiftui": 7, "revenuecat": 7, "arkit": 8, ...}, // score = sum of matched weights
-  "modifiers": {
-    "title_multiplier": 2,   // matches in the TITLE count double
-    "min_score": 6,          // drop anything below this
-    "good_min": 30,          // score >= this -> 🟢 GOOD
-    "hot_min": 60,           // score >= this -> 🔥 HOT   (6..29 -> 🟡 MAYBE)
-    "word_boundary": true    // "ios" != "kiosk", "java" != "javascript"; c++/node.js still match
-  }
+  "source": "upwork_official_mcp",
+  "account_role": "Freelancer",
+  "items": [{
+    "kind": "connects",
+    "observed_at": "COPY_REAL_OBSERVATION_TIME_RFC3339",
+    "evidence": {
+      "tool": "get_freelancer_financials",
+      "action": "connects_balance",
+      "trace_id": "COPY_REAL_TRACE_ID",
+      "result": {"status": "ok", "trace_id": "COPY_REAL_TRACE_ID", "balance": {"connectsBalance": 31}}
+    }
+  }]
 }
 ```
 
-**Scoring model:** `require_any` is a gate (must match ≥1, adds no points). The score is the
-sum of matched **`boost`** weights, with title matches multiplied by `title_multiplier`.
-`exclude` wins over everything. Tiers are calibrated to the real score distribution
-(median ≈ 33, top jobs 100–180), so 🔥 HOT genuinely means "drop everything and apply".
+This is a schema illustration, not current evidence. Supported kinds: job, draft,
+connects, proposal_snapshot, report. Job/draft items require full find_jobs/get evidence,
+active status and application eligibility. Drafts also require draft.cover_letter,
+optional screening_answers/fit_warning, and proposed_terms for review. The local quality
+gate runs without AI calls. Reports cannot change application pipeline status.
 
-> Not too narrow by design: `php`, `laravel`, `backend`, `android`, `node` are **not** hard-
-> excluded, because good mobile jobs often mention them (e.g. a native iOS app with a PHP
-> backend). Only clearly-irrelevant work (data entry, WordPress-only, Shopify stores, crypto,
-> etc.) is excluded.
-
-If `filters.json` is missing, it falls back to the `KEYWORDS` / `EXCLUDE_KEYWORDS` GitHub
-Variables (simple comma lists).
-
----
-
-## Setup — already done
-
-- Private repo, files, and workflow: **live**.
-- Bot: **@upwork_notificationsbot** → your chat. Secrets `TELEGRAM_BOT_TOKEN` +
-  `TELEGRAM_CHAT_ID`: **set**.
-- Baseline seeded. The DigitalOcean service checks continuously at the configured interval.
-- Private tracker: **https://upworkproposals.fera-tech.com** on Cloudflare Workers + D1.
-  Its login lasts 30 days; the generated password is stored only in the local ignored
-  `.tracker-credentials` file and encrypted Cloudflare Worker secrets.
-
----
-
-## Proposal Radar tracker
-
-`tracker/` is a mobile-first application pipeline running entirely on Cloudflare's free tier.
-
-- **Job inbox:** every matching job actually sent to Telegram, with compact cards and full
-  details in a tap-open drawer/bottom sheet.
-- **Applications:** generating a proposal records **Draft ready**. Confirm **I applied** from
-  Telegram or mark **Applied** in the tracker only after submitting on Upwork; unsubmitted drafts
-  never pollute conversion stats.
-- **Pipeline:** Applied → Viewed → Replied → Interview → Won/Lost, with an immutable event
-  history, notes, and labels.
-- **Search:** title, description, Upwork cipher/link, proposal, or labels. Pasting the complete
-  Telegram notification resolves the embedded Upwork job ID directly.
-- **Proposal record:** exact submitted draft, hook family, and screening answers remain attached
-  to the job for later client conversations.
-- **Performance:** confirmed-only funnel rates and results grouped by proof-led, diagnostic,
-  plan-led, and outcome-led openings. Small-sample guidance prevents premature conclusions.
-- **Security:** single-admin password, signed `HttpOnly`/`Secure`/`SameSite=Strict` 30-day cookie,
-  separate notifier ingestion token, same-origin API, CSP, and no public tracker data.
-
-Cloudflare resources:
-
-- Worker/custom domain: `upwork-proposals` / `upworkproposals.fera-tech.com`
-- D1 database: `upwork-proposals` (schema migrations in `tracker/migrations/`)
-- Worker secrets: `ADMIN_PASSWORD`, `SESSION_SECRET`, `INGEST_TOKEN`
-
-Local verification/deploy:
-
+Preview (no network):
 ```bash
-cd tracker
-npm install
-npm run typecheck
-npm run build
-npx wrangler d1 migrations apply upwork-proposals --remote
-npm run deploy
+python official_bridge.py --input /private/tmp/upwork-official-batch.json
 ```
-
-### Optional GitHub Variables (all have sane defaults)
-Repo → **Settings → Secrets and variables → Actions → Variables**:
-| Name | Meaning | Default |
-|------|---------|---------|
-| `MAX_NOTIFS` | max pings per check (best-scored first) | 25 |
-| `MAX_AGE_HOURS` | never notify jobs older than this | 24 |
-| `JOBS_PER_QUERY` | newest jobs fetched per search lane | 50 |
-| `CHECK_INTERVAL` | seconds between checks inside a run | 90 |
-
-### Optional proxy (only if the server IP gets blocked)
-If a run fails on the token/fetch: sign up free at **webshare.io** and add the proxy list as
-the encrypted `WEBSHARE_URL` secret, one `host:port:username:password` entry per line. A
-working proxy is chosen randomly when the service starts. The Webshare download URL is also
-supported, but an inline list avoids depending on a separate download token.
-
----
-
-## Tuning
-- **Change what matches / ranking:** edit `filters.json` (keywords, weights, `search_queries`)
-  and commit — that's the whole loop.
-- **Fewer / more pings:** raise `min_score` (or `good_min`/`hot_min`) to cut noise; lower to
-  see more. Or trim/add `search_queries`.
-- **Faster cadence:** change cron to `*/5 * * * *` (GitHub still throttles; ~5–15 min real).
-
-## Local test
+Deliver with the existing Telegram/tracker environment:
 ```bash
-python3 -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env      # fill in your values
-set -a && source .env && set +a
-python notifier.py
+python official_bridge.py --input /private/tmp/upwork-official-batch.json --deliver
 ```
+Alternatively dispatch notifier.yml with delivery_json via gh workflow run --json and
+JSON on stdin. It uses existing GitHub Telegram/tracker secrets, not plugin credentials.
+Bootstrap its delivery ledger once with initialize_delivery_state=true; subsequent
+missing ledgers fail closed. Normal regression checks run offline only.
 
-## Production deployment
+## Delivery and retention
 
-The notifier runs as `upwork-notifier.service` with its code under
-`/opt/upwork-notifier`, persistent state under `/var/lib/upwork-notifier`, and secrets
-under `/etc/upwork-notifier`. The service has a 384 MB hard memory limit and does not
-share application files, databases, ports, or process ownership with Prime Truck.
+SQLite claims each part before sending and records Telegram message IDs. A crash/timeout
+stays sending/uncertain and is never blindly retried. Reconcile in Telegram before any
+retry. Tracker receipts are independent; never claim a mirror without one. The delivery
+ledger retains identities/receipts for 30 days, not marketplace listings. Raw batches
+are temporary, never committed or uploaded as artifacts. Job/button details expire in
+26 hours. Drafts never count as submitted applications.
 
-Merging notifier, prompt, profile, dependency, or deployment changes into `main` runs the
-`Deploy notifier to DigitalOcean` workflow automatically. It can also be started manually.
-GitHub Secrets remain the source of truth for Telegram, Gemini, OpenAI, tracker, proxy, and
-healthcheck credentials.
-
-## Troubleshooting
-- **No `visitor_gql_token` cookie / 403:** direct IP blocked → add the Webshare proxy secret.
-- **401 from GraphQL:** token expired mid-run; the next cron run refreshes it automatically.
-- **OpenAI `insufficient_quota`:** API billing is separate from ChatGPT. Check the API
-  project's billing balance and usage limits, then replace `OPENAI_API_KEY` if needed.
-- **Secret was replaced but the bot still uses the old key:** manually run the
-  `Deploy notifier to DigitalOcean` workflow so the service receives the updated GitHub Secret.
-- **Too many / too few pings:** adjust `min_score` and `search_queries` in `filters.json`.
-- **Schema drift:** if Upwork changes the GraphQL schema, `GRAPHQL_QUERY` in `notifier.py`
-  is the one place to update.
-
-## Credit
-GraphQL + visitor-token method adapted from
-[asaniczka/Upwork-Job-Scraper](https://github.com/asaniczka/Upwork-Job-Scraper).
+## Checks
+```bash
+python -m unittest -q
+```
+Tests do not access Upwork, generate paid AI or send notifications. Legacy live-sample
+proposal QA cannot fetch listings; provide local samples instead.

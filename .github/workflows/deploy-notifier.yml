@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - "notifier.py"
+      - "official_bridge.py"
       - "filters.json"
       - "profile.md"
       - "proposal_prompt.md"
@@ -35,7 +36,6 @@ jobs:
       DEPLOY_USER: upwork-deploy
       DEPLOY_TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       DEPLOY_TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      DEPLOY_WEBSHARE_URL: ${{ secrets.WEBSHARE_URL }}
       DEPLOY_HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
       DEPLOY_GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       DEPLOY_GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
@@ -64,7 +64,7 @@ jobs:
       - name: Build deployment package and environment
         run: |
           tar -czf "/tmp/upwork-notifier-${GITHUB_SHA}.tar.gz" \
-            notifier.py filters.json profile.md proposal_prompt.md requirements.txt deploy/run_notifier.py
+            notifier.py official_bridge.py filters.json profile.md proposal_prompt.md requirements.txt deploy/run_notifier.py
           python3 - <<'PY'
           import json
           import os
@@ -73,7 +73,6 @@ jobs:
           names = (
               "TELEGRAM_BOT_TOKEN",
               "TELEGRAM_CHAT_ID",
-              "WEBSHARE_URL",
               "HEALTHCHECK_URL",
               "GEMINI_API_KEY",
               "GEMINI_MODEL",
@@ -99,7 +98,6 @@ jobs:
                   "SEEN_PATH": "/var/lib/upwork-notifier/seen.json",
                   "LOCK_PATH": "/var/lib/upwork-notifier/notifier.lock",
                   "STORE_PATH": "/var/lib/upwork-notifier/store.json",
-                  "TOKEN_PATH": "/var/lib/upwork-notifier/token.json",
               }
           )
           path = Path(f"/tmp/upwork-notifier-env-{os.environ['GITHUB_SHA']}.json")

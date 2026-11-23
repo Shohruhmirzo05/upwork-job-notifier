@@ -16,19 +16,16 @@ class WorkflowRuntimeTests(unittest.TestCase):
         self.assertNotIn("schedule:", CHECK_WORKFLOW)
         self.assertNotIn("- name: Cycle", CHECK_WORKFLOW)
 
-    def test_github_deploy_and_openai_safety_guards_remain_enabled(self):
-        self.assertIn("workflow_dispatch: {}", CHECK_WORKFLOW)
-        self.assertIn("Verify OpenAI fallback credentials", CHECK_WORKFLOW)
-        self.assertIn("python notifier.py --check-openai", CHECK_WORKFLOW)
-        self.assertIn("OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}", CHECK_WORKFLOW)
-        self.assertNotIn("continue-on-error: true", CHECK_WORKFLOW)
+    def test_only_offline_tests_run_without_an_explicit_delivery_batch(self):
+        self.assertIn("workflow_dispatch:", CHECK_WORKFLOW)
+        self.assertIn("delivery_json:", CHECK_WORKFLOW)
+        self.assertNotIn("--check-openai", CHECK_WORKFLOW)
+        self.assertNotIn("schedule:", CHECK_WORKFLOW)
+        self.assertIn("python -m unittest -q", CHECK_WORKFLOW)
+        self.assertIn("Preserve receipts including uncertain sends", CHECK_WORKFLOW)
+        self.assertIn("initialize_delivery_state", CHECK_WORKFLOW)
         self.assertIn("branches: [main]", DEPLOY_WORKFLOW)
-        self.assertIn("DEPLOY_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}", DEPLOY_WORKFLOW)
-        self.assertIn("DEPLOY_RELEASE_ID:", DEPLOY_WORKFLOW)
-        self.assertNotRegex(
-            CHECK_WORKFLOW,
-            r"Verify OpenAI fallback credentials\n\s+if:",
-        )
+        self.assertNotIn("WEBSHARE_URL", DEPLOY_WORKFLOW)
 
 
 if __name__ == "__main__":

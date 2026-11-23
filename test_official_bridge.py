@@ -1,4 +1,5 @@
 import copy
+import importlib.util
 import json
 import os
 import sys
@@ -28,6 +29,24 @@ def sample():
 
 
 class OfficialBridgeTests(unittest.TestCase):
+    @unittest.skipUnless(importlib.util.find_spec("cryptography"), "Install runtime dependencies for encryption test")
+    def test_receipts_are_authenticated_and_encrypted(self):
+        import relay_state
+        from cryptography.fernet import Fernet, InvalidToken
+        with tempfile.TemporaryDirectory() as temp, \
+                patch.dict(os.environ, {"OFFICIAL_RELAY_STATE_KEY": Fernet.generate_key().decode()}):
+            path = Path(temp) / "receipts"
+            path.write_bytes(b"private delivery receipt")
+            relay_state.transform("encrypt", path)
+            encrypted = Path(str(path) + ".enc")
+            self.assertNotIn(b"private delivery receipt", encrypted.read_bytes())
+            path.unlink()
+            relay_state.transform("decrypt", path)
+            self.assertEqual(path.read_bytes(), b"private delivery receipt")
+            encrypted.write_bytes(b"tampered")
+            with self.assertRaises(InvalidToken):
+                relay_state.transform("decrypt", path)
+
     def test_retired_discovery_never_contacts_any_network(self):
         with patch.object(notifier.requests, "get", create=True) as get, \
                 patch.object(notifier.requests, "post", create=True) as post:

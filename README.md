@@ -66,8 +66,11 @@ Deliver with the existing Telegram/tracker environment:
 ```bash
 python official_bridge.py --input /private/tmp/upwork-official-batch.json --deliver
 ```
-Alternatively dispatch notifier.yml with delivery_json via gh workflow run --json and
-JSON on stdin. It uses existing GitHub Telegram/tracker secrets, not plugin credentials.
+Alternatively put the batch into the GitHub secret OFFICIAL_RELAY_BATCH, then dispatch notifier.yml
+with deliver_results=true. Never put account data in public workflow inputs. Existing
+Telegram/tracker secrets are reused; plugin credentials are never copied. The receipt
+cache is encrypted using OFFICIAL_RELAY_STATE_KEY and contains no plaintext account data.
+Delete the temporary batch secret after delivery.
 Bootstrap its delivery ledger once with initialize_delivery_state=true; subsequent
 missing ledgers fail closed. Normal regression checks run offline only.
 

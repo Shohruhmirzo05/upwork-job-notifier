@@ -18,7 +18,7 @@ class WorkflowRuntimeTests(unittest.TestCase):
 
     def test_only_offline_tests_run_without_an_explicit_delivery_batch(self):
         self.assertIn("workflow_dispatch:", CHECK_WORKFLOW)
-        self.assertIn("delivery_json:", CHECK_WORKFLOW)
+        self.assertIn("deliver_results:", CHECK_WORKFLOW)
         self.assertNotIn("--check-openai", CHECK_WORKFLOW)
         self.assertNotIn("schedule:", CHECK_WORKFLOW)
         self.assertIn("python -m unittest -q", CHECK_WORKFLOW)

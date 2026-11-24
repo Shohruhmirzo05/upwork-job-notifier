@@ -83,6 +83,19 @@ sudo -u upwork-notifier /opt/upwork-notifier/current/.venv/bin/python \
 This previews by default. Add `--deliver` only for authorized sends after reviewing
 the preview. Keep the batch private and readable by the bot user, then remove it
 after reconciling receipts. The server ledger stays in its dedicated state directory.
+
+### Isolated manual container installation
+
+`deploy/compose.relay.yml` supports an existing Docker host without root shell access
+or GitHub Actions. It publishes no ports, runs as an unprivileged user with a read-only
+filesystem, and caps the bot at 192 MB and 0.10 CPU. Set `UPWORK_CONFIG_DIR` and
+`UPWORK_STATE_DIR` to separate private directories owned by the deployment user.
+Only the application code enters the image; `.dockerignore` is an explicit allowlist.
+Place existing bot settings in `UPWORK_CONFIG_DIR/env.json` with mode 0600. The provided
+`deploy/env.template.json` contains empty placeholders, never usable credentials.
+Build and offline smoke-test the image first. Do not start the bot until its existing
+Telegram token and owner chat are restored. Never print those settings or put them
+in a workflow input, command line, image, source commit or chat.
 Bootstrap its delivery ledger once with initialize_delivery_state=true; subsequent
 missing ledgers fail closed. Normal regression checks run offline only.
 

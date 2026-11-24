@@ -1,0 +1,13 @@
+*
+!requirements.txt
+!notifier.py
+!official_bridge.py
+!relay_state.py
+!filters.json
+!profile.md
+!proposal_prompt.md
+!deploy/
+deploy/*
+!deploy/Dockerfile
+!deploy/run_notifier.py
+!deploy/run_official_delivery.py

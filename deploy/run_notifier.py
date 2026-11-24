@@ -14,7 +14,7 @@ import runpy
 from pathlib import Path
 
 
-ENV_PATH = Path("/etc/upwork-notifier/env.json")
+ENV_PATH = Path(os.environ.get("UPWORK_NOTIFIER_ENV", "/etc/upwork-notifier/env.json"))
 
 
 def load_environment(path: Path = ENV_PATH) -> None:

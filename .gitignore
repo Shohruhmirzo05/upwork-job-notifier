@@ -30,3 +30,6 @@ tracker/design-qa-*.png
 # Official result relay runtime
 official-delivery.sqlite3*
 *official-batch*.json
+application-performance.md
+output/official-upwork-review-*.md
+output/manual-deploy-status-*.md

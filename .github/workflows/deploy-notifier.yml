@@ -64,7 +64,8 @@ jobs:
       - name: Build deployment package and environment
         run: |
           tar -czf "/tmp/upwork-notifier-${GITHUB_SHA}.tar.gz" \
-            notifier.py official_bridge.py filters.json profile.md proposal_prompt.md requirements.txt deploy/run_notifier.py
+            notifier.py official_bridge.py relay_state.py filters.json profile.md proposal_prompt.md requirements.txt \
+            deploy/run_notifier.py deploy/run_official_delivery.py
           python3 - <<'PY'
           import json
           import os

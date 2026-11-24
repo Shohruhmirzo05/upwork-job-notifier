@@ -72,6 +72,17 @@ Telegram/tracker secrets are reused; plugin credentials are never copied. The re
 cache is encrypted using OFFICIAL_RELAY_STATE_KEY and contains no plaintext account data.
 Delete the temporary batch secret after delivery.
 Reuse the existing receipt encryption key; replacing it loses access to prior receipts.
+
+For direct server delivery without GitHub Actions, use the existing server environment:
+
+```bash
+sudo -u upwork-notifier /opt/upwork-notifier/current/.venv/bin/python \
+  /opt/upwork-notifier/current/deploy/run_official_delivery.py --input /path/to/approved-batch.json
+```
+
+This previews by default. Add `--deliver` only for authorized sends after reviewing
+the preview. Keep the batch private and readable by the bot user, then remove it
+after reconciling receipts. The server ledger stays in its dedicated state directory.
 Bootstrap its delivery ledger once with initialize_delivery_state=true; subsequent
 missing ledgers fail closed. Normal regression checks run offline only.
 

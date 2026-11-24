@@ -1,36 +1,30 @@
 name: Notifier regression check
 
 on:
-  workflow_dispatch: {}
-
-# DigitalOcean is the only continuous runtime. This manual workflow validates code and
-# the OpenAI fallback without starting a second notifier or consuming hours of runner time.
+  workflow_dispatch:
+    inputs:
+      deliver_results:
+        description: Deliver the private batch in OFFICIAL_RELAY_BATCH (never put account data in inputs)
+        required: false
+        default: false
+        type: boolean
+      initialize_delivery_state:
+        description: Initialize the delivery ledger only for the first ever relay run
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
+
+concurrency:
+  group: official-upwork-result-delivery
+  cancel-in-progress: false
 
 jobs:
   notify:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      WEBSHARE_URL: ${{ secrets.WEBSHARE_URL }}
-      HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}   # dead-man's-switch (optional)
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}     # free Gemini key for proposals (optional)
-      GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}     # paid fallback when Gemini is exhausted
-      OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
-      TRACKER_API_URL: ${{ vars.TRACKER_API_URL }}
-      TRACKER_API_TOKEN: ${{ secrets.TRACKER_API_TOKEN }}
-      MAX_PAGES: ${{ vars.MAX_PAGES }}
-      MAX_NOTIFS: ${{ vars.MAX_NOTIFS }}
-      MAX_AGE_HOURS: ${{ vars.MAX_AGE_HOURS }}
-      JOBS_PER_QUERY: ${{ vars.JOBS_PER_QUERY }}
-      KEYWORDS: ${{ vars.KEYWORDS }}
-      EXCLUDE_KEYWORDS: ${{ vars.EXCLUDE_KEYWORDS }}
-      CHECK_INTERVAL: ${{ vars.CHECK_INTERVAL }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -39,7 +33,73 @@ jobs:
           cache: pip
       - name: Install deps
         run: pip install -r requirements.txt
-      - name: Run regression tests
+      - name: Run offline regression tests
         run: python -m unittest -q
-      - name: Verify OpenAI fallback credentials
-        run: python notifier.py --check-openai
+      - name: Verify receipt encryption before delivery
+        if: inputs.deliver_results
+        env:
+          OFFICIAL_RELAY_STATE_KEY: ${{ secrets.OFFICIAL_RELAY_STATE_KEY }}
+        run: python relay_state.py check
+      - name: Restore delivery receipts
+        if: inputs.deliver_results
+        id: delivery-state
+        uses: actions/cache/restore@v4
+        with:
+          path: official-delivery.sqlite3.enc
+          key: official-delivery-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: official-delivery-v1-
+      - name: Decrypt delivery receipts
+        if: inputs.deliver_results && steps.delivery-state.outputs.cache-matched-key != ''
+        env:
+          OFFICIAL_RELAY_STATE_KEY: ${{ secrets.OFFICIAL_RELAY_STATE_KEY }}
+        run: python relay_state.py decrypt
+      - name: Require existing ledger after bootstrap
+        if: inputs.deliver_results && steps.delivery-state.outputs.cache-matched-key == '' && !inputs.initialize_delivery_state
+        run: |
+          echo 'Delivery ledger is missing. Reconcile prior receipts before initializing it.' >&2
+          exit 1
+      - name: Prepare and preview official results
+        if: inputs.deliver_results
+        env:
+          DELIVERY_JSON: ${{ secrets.OFFICIAL_RELAY_BATCH }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          raw = os.environ['DELIVERY_JSON']
+          if len(raw) > 60000:
+              raise SystemExit('Use a smaller bounded result batch')
+          path = Path('/tmp/upwork-official-batch.json')
+          path.write_text(raw)
+          path.chmod(0o600)
+          PY
+          python official_bridge.py --input /tmp/upwork-official-batch.json > /tmp/upwork-preview.json
+      - name: Deliver to configured owner bot and tracker
+        if: inputs.deliver_results
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TRACKER_API_URL: ${{ vars.TRACKER_API_URL }}
+          TRACKER_API_TOKEN: ${{ secrets.TRACKER_API_TOKEN }}
+        run: |
+          python official_bridge.py --input /tmp/upwork-official-batch.json --deliver > /tmp/relay-receipts.json
+          python - <<'PY'
+          import json
+          from collections import Counter
+          from pathlib import Path
+          print(dict(Counter(r['status'] for r in json.loads(Path('/tmp/relay-receipts.json').read_text()))))
+          PY
+      - name: Encrypt receipts before caching
+        if: always() && inputs.deliver_results
+        env:
+          OFFICIAL_RELAY_STATE_KEY: ${{ secrets.OFFICIAL_RELAY_STATE_KEY }}
+        run: python relay_state.py encrypt
+      - name: Preserve receipts including uncertain sends
+        if: always() && inputs.deliver_results
+        uses: actions/cache/save@v4
+        with:
+          path: official-delivery.sqlite3.enc
+          key: official-delivery-v1-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Remove temporary account data
+        if: always()
+        run: rm -f /tmp/upwork-official-batch.json /tmp/upwork-preview.json /tmp/relay-receipts.json official-delivery.sqlite3

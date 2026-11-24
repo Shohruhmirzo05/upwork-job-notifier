@@ -1,0 +1,35 @@
+name: upwork-official-relay
+services:
+  relay:
+    image: upwork-official-relay:${UPWORK_RELEASE:-local}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    user: "${UPWORK_UID:-1000}:${UPWORK_GID:-1000}"
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 0.10
+    mem_limit: 192m
+    mem_reservation: 64m
+    pids_limit: 32
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16777216
+    volumes:
+      - type: bind
+        source: ${UPWORK_CONFIG_DIR:?Set the private configuration directory}
+        target: /run/notifier-config
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${UPWORK_STATE_DIR:?Set the private state directory}
+        target: /var/lib/upwork-notifier
+        bind:
+          create_host_path: false
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+        max-file: "2"

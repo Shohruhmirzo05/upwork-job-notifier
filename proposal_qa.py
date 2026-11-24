@@ -74,11 +74,11 @@ def _select_diverse(hits, count):
     return selected
 
 
-def fetch_sample(count):
+def fetch_sample(count, samples_path):
     cfg = notifier.load_filters()
-    proxy = notifier.get_proxy_dict()
-    token = notifier.get_token(proxy)
-    jobs = notifier.fetch_all_jobs(token, proxy, cfg)
+    jobs = json.loads(Path(samples_path).read_text())
+    if not isinstance(jobs, list):
+        raise ValueError("Samples must be a local JSON list of official-plugin job results")
     hits = []
     for job in jobs:
         passes, score, matched = notifier.score_job(job, cfg)
@@ -244,11 +244,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--count", type=int, default=8, choices=range(5, 11))
     parser.add_argument("--output-dir", default="proposal-qa-output")
+    parser.add_argument("--samples", required=True, help="Local normalized official-plugin jobs JSON; never fetch live jobs")
     args = parser.parse_args()
     if not notifier.AI_ENABLED:
         raise SystemExit("Set GEMINI_API_KEY or OPENAI_API_KEY for proposal QA")
 
-    jobs, fetched, matching = fetch_sample(args.count)
+    jobs, fetched, matching = fetch_sample(args.count, args.samples)
     results = []
     for index, job in enumerate(jobs, 1):
         print(f"[qa] generating {index}/{len(jobs)}: {job['title']}")

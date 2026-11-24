@@ -4,11 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       count:
-        description: Number of diverse live jobs to test
+        description: Number of locally supplied jobs to test
         required: true
         default: "8"
         type: choice
         options: ["5", "6", "7", "8", "9", "10"]
+      samples_json:
+        description: Local normalized official-plugin job samples as JSON; no live search
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -18,7 +22,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      WEBSHARE_URL: ${{ secrets.WEBSHARE_URL }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -35,7 +38,16 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Generate and evaluate proposals
-        run: python proposal_qa.py --count "${{ inputs.count }}" --output-dir proposal-qa-output
+        env:
+          SAMPLES_JSON: ${{ inputs.samples_json }}
+          SAMPLE_COUNT: ${{ inputs.count }}
+        run: |
+          python - <<'PYTHON'
+          import os
+          from pathlib import Path
+          Path('/tmp/official-qa-samples.json').write_text(os.environ['SAMPLES_JSON'])
+          PYTHON
+          python proposal_qa.py --samples /tmp/official-qa-samples.json --count "$SAMPLE_COUNT" --output-dir proposal-qa-output
       - name: Upload QA report
         if: always()
         uses: actions/upload-artifact@v4
